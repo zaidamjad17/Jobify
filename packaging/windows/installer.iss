@@ -2,7 +2,7 @@
 ; Start menu entry and a desktop shortcut. Build after PyInstaller:  iscc packaging\windows\installer.iss
 #define AppVersion GetEnv("JOBAPPLY_VERSION")
 #if AppVersion == ""
-  #define AppVersion "0.2.0"
+  #define AppVersion "0.2.1"
 #endif
 
 [Setup]
