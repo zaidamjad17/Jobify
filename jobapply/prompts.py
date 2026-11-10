@@ -67,6 +67,7 @@ wellfound, workday, company site, email), status, unanswered questions, and shor
 REFILL_TASK = """Continue the application at {url} in the current tab. It was filled earlier, and fields were left
 empty for questions the user has now answered; their answers are in the candidate profile (Saved answers). The
 questions were: {questions}
+The user chose not to answer: {skipped}. Leave those fields empty and do not ask them again.
 
 1. Look at the page as it is now. If it still shows the application, fill every empty field the profile now answers
    (those questions first, then any other empty required field), and keep what is already filled unless it is wrong.

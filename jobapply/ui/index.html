@@ -321,7 +321,7 @@ function renderRows(rows) {
 	$('rows').innerHTML = rows.length ? rows.map(r => {
 		const open = ['needs_input', 'filled', 'email_drafted', 'failed'].includes(r.status);
 		const actions = [
-			r.tab_id && r.status !== 'submitted' ? `<a data-tab-id="${esc(r.tab_id)}">show tab</a>` : '',
+			r.tab_id && r.status !== 'submitted' ? `<a data-tab-id="${esc(r.tab_id.split(' ').pop())}">show tab</a>` : '',
 			open ? `<a data-refill="${esc(r.url)}" title="Go back to this application and fill what your answers now cover">fill again</a>` : '',
 			open ? `<button class="btn ghost small" data-submitted="${esc(r.url)}" title="You submitted it: never apply to it again">Submitted ✓</button>` : '',
 		].filter(Boolean).join(' · ');

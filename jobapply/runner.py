@@ -51,20 +51,52 @@ def questions() -> Questions:
 	return Questions(app_home() / 'questions.json')
 
 
+DISMISSED = '(dismissed)'
+
+
+def _acted(q: Question) -> bool:
+	"""Answered, or a login request the user marked Done: something the agent can now continue with."""
+	return bool(q.answer) and (q.answer != DISMISSED or q.field_hint == 'login')
+
+
+def _job_questions(row: Row) -> dict[str, list[Question]]:
+	"""The questions in this job's row, by state: open, acted (answered / login done), skipped."""
+	names = {norm_question(q) for q in row.unanswered_questions.split(' | ') if q.strip()}
+	by_state: dict[str, list[Question]] = {'open': [], 'acted': [], 'skipped': []}
+	for q in questions().all():
+		if norm_question(q.question) in names:
+			by_state['open' if not q.answer else 'acted' if _acted(q) else 'skipped'].append(q)
+	return by_state
+
+
+def skipped_questions(url: str) -> list[str]:
+	"""Questions of this job the user chose not to answer (Skip): left empty and not asked again."""
+	row = tracker().latest(url)
+	return [q.question for q in _job_questions(row)['skipped']] if row else []
+
+
 def ready_jobs() -> list[str]:
-	"""Jobs waiting on questions that are now all answered or closed: the loop can go back and finish them."""
-	still_open = {norm_question(q.question) for q in questions().open()}
+	"""Jobs waiting on questions that are all closed now, at least one by an answer (or a login marked Done): the loop
+	can go back and fill them. Skips alone add nothing to fill."""
 	latest: dict[str, Row] = {}
 	for row in tracker().rows():
 		if row.url:
 			latest[job_key(row.url)] = row
-	return [
-		row.url
-		for row in latest.values()
-		if row.status == 'needs_input'
-		and row.unanswered_questions
-		and not any(norm_question(q) in still_open for q in row.unanswered_questions.split(' | '))
-	]
+	ready = []
+	for row in latest.values():
+		if row.status != 'needs_input' or not row.unanswered_questions:
+			continue
+		state = _job_questions(row)
+		if not state['open'] and state['acted']:
+			ready.append(row.url)
+	return ready
+
+
+def refill_task(url: str, row: Row) -> str:
+	state = _job_questions(row)
+	answered = ' | '.join(q.question for q in state['acted']) or row.unanswered_questions or '(none listed)'
+	skipped = ' | '.join(q.question for q in state['skipped']) or '(none)'
+	return REFILL_TASK.replace('{url}', url).replace('{questions}', answered).replace('{skipped}', skipped)
 
 
 def build_rules(profile: str, criteria: str) -> str:
@@ -338,8 +370,12 @@ class Runner:
 		self._log(f'{label}: {len(jobs)} new job(s) found.' if jobs else f'{label}: nothing new.')
 		return jobs
 
-	def _job_tools(self, url: str, docs: dict[str, str], asked: list[str], writer: Any) -> Any:
-		"""prepare_documents and ask_user for one job; docs and asked collect what they did."""
+	def _job_tools(
+		self, url: str, docs: dict[str, str], asked: list[str], writer: Any, skipped: list[str] | tuple[str, ...] = ()
+	) -> Any:
+		"""prepare_documents and ask_user for one job; docs and asked collect what they did. skipped: questions the
+		user chose not to answer, which ask_user does not send again."""
+		skip = {norm_question(q) for q in skipped}
 		from browser_use import Tools
 
 		s = self.settings
@@ -372,6 +408,8 @@ class Runner:
 			'the profile for next time). Leave the field empty and keep going.'
 		)
 		def ask_user(question: str, field: str = '') -> str:
+			if norm_question(question) in skip or any(k and k in norm_question(question) for k in skip):
+				return 'The user chose not to answer this. Leave the field empty and do not ask again.'
 			q = self.questions.ask(
 				Question(
 					question=question,
@@ -432,15 +470,17 @@ class Runner:
 			if letter.exists():
 				docs['cover_letter_text'] = letter.read_text(encoding='utf-8').strip()
 		asked: list[str] = []
-		tools = self._job_tools(url, docs, asked, writer)
+		tools = self._job_tools(url, docs, asked, writer, skipped=skipped_questions(url))
 		await self._start_browser()
 		mark = self.guard.mark() if self.guard else 0
-		tab = row.tab_id
-		if tab and self.guard and tab in self.guard.pages:  # its tab is still open: lock it again and continue there
-			self.guard.lock([tab])
+		# every tab the job used (the posting, the application form on the company site, a Gmail draft)
+		open_tabs = [t for t in row.tab_id.split() if self.guard and t in self.guard.pages]
+		if open_tabs and self.guard:  # lock them all again and continue in the last one: the application form
+			self.guard.lock(open_tabs)
+			tab = open_tabs[-1]
 			await asyncio.to_thread(self._attach_tab, tab)
-			task = REFILL_TASK.replace('{url}', url).replace('{questions}', row.unanswered_questions or '(none listed)')
-		else:  # the tab was closed: start the application again
+			task = refill_task(url, row)
+		else:  # the tabs were closed: start the application again
 			tab = await asyncio.to_thread(self._open_tab, url)
 			task = APPLY_TASK.replace('{url}', url)
 		outcome: JobOutcome | None = None
@@ -471,8 +511,12 @@ class Runner:
 	) -> None:
 		"""Audit the filled tabs, hand them to the user, and log the job (update: change its existing row)."""
 		tabs = self.guard.tabs_since(mark) if self.guard else [tab]
-		if update and tab not in tabs:
-			tabs.insert(0, tab)
+		if update:  # the job's earlier tabs that are still open, then the ones this run opened
+			before = (self.tracker.latest(job['url']) or Row()).tab_id.split()
+			kept = [t for t in before if not self.guard or t in self.guard.pages]
+			tabs = [*kept, *(t for t in tabs if t not in kept)]
+			if tab not in tabs:
+				tabs.insert(0, tab)
 		status = outcome.status if outcome else 'failed'
 		if status in ('filled', 'email_drafted', 'needs_input', 'failed') and self.browser is not None:
 			try:  # answers the profile does not give (salary, start date, visa...) are emptied and asked
@@ -516,7 +560,7 @@ class Runner:
 			'title': (outcome.title if outcome else '') or job.get('title', ''),
 			'board': (outcome.board if outcome else '') or job.get('board', ''),
 			'status': status,
-			'tab_id': tab if tabs else '',
+			'tab_id': ' '.join(dict.fromkeys(tabs)),  # every tab of the job; the last is where it ended
 			'resume': docs.get('resume_pdf', ''),
 			'cover_letter': docs.get('cover_letter_pdf', ''),
 			'unanswered_questions': ' | '.join(unique.values()),

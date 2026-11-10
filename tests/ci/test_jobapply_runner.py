@@ -421,3 +421,92 @@ def test_marking_a_job_submitted_keeps_it_out_of_the_loop(tmp_path, monkeypatch)
 	t.update('https://jobs.lever.co/acme/1?lever-source=x', status='submitted')
 	assert [r.status for r in t.rows()] == ['submitted']
 	assert t.seen('https://jobs.lever.co/acme/1') and runner_mod.ready_jobs() == []
+
+
+FORM = """<!doctype html><html><body><form onsubmit="window.submits++; return false"><input id=salary name=salary>
+<button type=submit id=submit onclick="window.clicks++">Submit application</button></form>
+<script>window.clicks = 0; window.submits = 0;</script></body></html>"""
+
+OPEN_FORM = "new_tab({form!r}); wait_for_load(); print('form open')"
+
+FORM_CHECK = """
+x, y = js('(() => { const r = document.getElementById("submit").getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()')
+click_at_xy(x, y)
+import time; time.sleep(0.3)
+print('on', js('location.href'), 'clicks', js('window.clicks'))
+"""
+
+
+def test_finishing_a_job_continues_in_its_application_tab_and_locks_every_tab_of_it(tmp_path, monkeypatch):
+	"""Codex review: when the application opens in a second tab (LinkedIn -> the company site), only the posting tab
+	was remembered, so going back re-locked the posting and worked there while the form tab stayed unlocked."""
+	chrome = find_chrome() or pytest.skip('Chrome not installed')
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	job, form = tmp_path / 'job.html', tmp_path / 'form.html'
+	job.write_text(JOB, encoding='utf-8')
+	form.write_text(FORM, encoding='utf-8')
+	profile = tmp_path / 'profile.md'
+	profile.write_text(PROFILE, encoding='utf-8')
+	settings = Settings(
+		profile_path=str(profile),
+		criteria_path=str(profile),
+		gemini_api_key='k',
+		boards=[],
+		job_urls=[job.as_uri()],
+		browser_executable=chrome,
+	)
+	done = {'status': 'filled', 'company': 'Acme', 'title': 'Engineer', 'url': job.as_uri()}
+	model, seen = script(
+		('python', {'code': OPEN_FORM.format(form=form.as_uri())}),
+		('ask_user', {'question': 'What is your desired salary?', 'field': 'salary'}),
+		('finish', {'success': True, 'result': done}),
+		('python', {'code': FORM_CHECK}),
+		('finish', {'success': True, 'result': done}),
+	)
+	monkeypatch.setattr(runner_mod, 'agent_llm', lambda s: model)
+	monkeypatch.setattr(runner_mod, 'writer_model', lambda llm: None)
+	r = runner_mod.Runner(settings, lambda e: None)
+	r.start()
+	try:
+		r._thread.join(120)
+		tabs = runner_mod.tracker().rows()[0].tab_id.split()
+		assert len(tabs) == 2  # the posting and the form
+		question = runner_mod.questions().open()[0]
+		runner_mod.questions().answer(question.id, '70,000 EUR', profile)
+		r.request_refill(job.as_uri())
+		r.start(refill_only=True)
+		r._thread.join(120)
+		assert f'on {form.as_uri()} clicks 0' in str(seen[4][-1])  # continued in the form tab, Submit held there
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())
+
+
+def test_a_skipped_question_is_not_asked_again_and_skips_alone_do_not_start_a_refill(tmp_path, monkeypatch):
+	"""Codex review: Skip closed a question without an answer, yet started a refill whose agent asked it again."""
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	(tmp_path / 'home').mkdir()
+	profile = tmp_path / 'p.md'
+	profile.write_text(PROFILE, encoding='utf-8')
+	t, qs = runner_mod.tracker(), runner_mod.questions()
+	url = 'https://jobs.lever.co/a/1'
+	t.add(runner_mod.Row(url=url, status='needs_input', unanswered_questions='Polish level? | Notice period?'))
+	polish = qs.ask(runner_mod.Question('Polish level?', url=url))
+	notice = qs.ask(runner_mod.Question('Notice period?', url=url))
+	qs.dismiss(polish.id)
+	assert runner_mod.ready_jobs() == []  # still waiting on the notice period
+	qs.dismiss(notice.id)
+	assert runner_mod.ready_jobs() == []  # only skips: nothing new to fill
+	login = qs.ask(runner_mod.Question('Please log in to Acme', field_hint='login', url=url))
+	t.update(url, unanswered_questions='Polish level? | Notice period? | Please log in to Acme')
+	qs.dismiss(login.id)  # Done on a login request: the user did something, so go back
+	assert runner_mod.ready_jobs() == [url]
+
+	settings = Settings(profile_path=str(profile), criteria_path=str(profile), gemini_api_key='k')
+	r = runner_mod.Runner(settings, lambda e: None)
+	asked: list[str] = []
+	tools = r._job_tools(url, {}, asked, None, skipped=runner_mod.skipped_questions(url))
+	ask = next(tool for tool in tools.functions if tool.name == 'ask_user').function
+	assert 'chose not to answer' in ask('What is your Polish level?')
+	assert asked == [] and [q.question for q in qs.open()] == []
+	assert 'Polish level?' in runner_mod.refill_task(url, t.latest(url))

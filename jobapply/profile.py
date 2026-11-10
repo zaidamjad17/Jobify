@@ -195,5 +195,5 @@ class Questions:
 			q = next((q for q in questions if q.id == question_id), None)
 			if q is None:
 				raise ValueError('That question is gone.')
-			q.answer = '(dismissed)'
+			q.answer = '(dismissed)'  # runner.DISMISSED
 			self._write(questions)
