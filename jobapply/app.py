@@ -183,7 +183,8 @@ class Api:
 	def _login_open(self) -> bool:
 		return self._login_browser is not None and self._login_browser.poll() is None
 
-	def start(self) -> dict:
+	def _ready_runner(self) -> Runner | dict:
+		"""The runner with the current settings, or {'error': ...} when they are not complete."""
 		if self._login_open():
 			return {'error': 'Close the login browser window first (it uses the same profile), then press Start.'}
 		try:
@@ -198,10 +199,53 @@ class Api:
 			return {'error': str(e)}
 		if self._runner is None:
 			self._runner = Runner(settings, self._event)
-		else:
+		elif self._runner.state == 'idle':
 			self._runner.settings = settings
-		self._runner.start()
+		return self._runner
+
+	def start(self) -> dict:
+		runner = self._ready_runner()
+		if isinstance(runner, dict):
+			return runner
+		runner.start()
 		return {'ok': True}
+
+	def refill(self, url: str) -> dict:
+		"""Go back to this job's application and fill what the profile (with the user's answers) now covers. Runs next
+		when the loop is running; otherwise it runs on its own and stops after."""
+		runner = self._ready_runner()
+		if isinstance(runner, dict):
+			return runner
+		runner.request_refill(url)
+		if runner.state == 'idle':
+			runner.start(refill_only=True)
+		return {'ok': True}
+
+	def _refill_answered(self) -> list[str]:
+		"""Finish every job whose questions are all answered or closed now."""
+		from jobapply.runner import ready_jobs
+
+		urls = ready_jobs()
+		for url in urls:
+			result = self.refill(url)
+			if 'error' in result:
+				self._event({'kind': 'log', 'text': f'Could not go back to the application: {result["error"]}', 'level': 'error'})
+				break
+		return urls
+
+	def mark_submitted(self, url: str) -> dict:
+		"""The user submitted this application: it is done, its questions close, and it is never applied to again."""
+		from jobapply.tracker import job_key
+
+		try:
+			row = tracker().update(url, status='submitted')
+			key = job_key(url)
+			for q in questions().open():
+				if q.url and job_key(q.url) == key:
+					questions().dismiss(q.id)
+			return {'ok': True, 'row': dataclasses.asdict(row)}
+		except (ValueError, OSError) as e:
+			return {'error': str(e)}
 
 	def pause(self) -> dict:
 		if self._runner:
@@ -228,17 +272,17 @@ class Api:
 		try:
 			settings = Settings.load()
 			q = questions().answer(question_id, text, settings.profile_path)
-			return {'ok': True, 'question': q.question}
 		except (ValueError, OSError) as e:
 			return {'error': str(e)}
+		return {'ok': True, 'question': q.question, 'finishing': self._refill_answered()}
 
 	def dismiss(self, question_id: str) -> dict:
 		"""Close a question without an answer (a login done in the browser, or one the user will not answer)."""
 		try:
 			questions().dismiss(question_id)
-			return {'ok': True}
 		except (ValueError, OSError) as e:
 			return {'error': str(e)}
+		return {'ok': True, 'finishing': self._refill_answered()}
 
 	# ChatGPT
 

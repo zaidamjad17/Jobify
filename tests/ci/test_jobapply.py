@@ -67,7 +67,7 @@ def test_tracker_counts_today_and_dedupes(tmp_path):
 	assert t.rows()[0].company == 'Ácme'  # utf-8-sig (Excel) round-trips
 	assert (tmp_path / 'a.csv').read_bytes().startswith(b'\xef\xbb\xbf')
 	with pytest.raises(ValueError):
-		t.add(Row(url='u', status='submitted'))
+		t.add(Row(url='u', status='applied'))
 
 
 def test_questions_merge_repeats_and_answers_go_to_profile(tmp_path):
@@ -399,3 +399,30 @@ def test_update_download_checks_the_installer_and_install_starts_it_silently(hom
 	started = []
 	updater.install(path, popen=lambda args, **kw: started.append(args))
 	assert started == [[str(path), '/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS']]
+
+
+def test_answering_a_jobs_last_question_sends_it_back_to_be_filled(home, monkeypatch):
+	"""The app goes back to an application once all its questions are answered or closed; Submitted closes a job and
+	its questions for good."""
+	from jobapply import app
+	from jobapply.runner import questions, tracker
+
+	home.mkdir(parents=True, exist_ok=True)
+	profile = home / 'p.md'
+	profile.write_text('# Me\n', encoding='utf-8')
+	Settings(profile_path=str(profile), gemini_api_key='k').save()
+	t, qs = tracker(), questions()
+	t.add(Row(url='https://jobs.lever.co/a/1', status='needs_input', unanswered_questions='Salary? | Notice period?'))
+	t.add(Row(url='https://jobs.lever.co/b/2', status='needs_input', unanswered_questions='Why us?'))
+	salary = qs.ask(Question('Salary?', url='https://jobs.lever.co/a/1'))
+	notice = qs.ask(Question('Notice period?', url='https://jobs.lever.co/a/1'))
+	why = qs.ask(Question('Why us?', url='https://jobs.lever.co/b/2'))
+	api = app.Api()
+	sent = []
+	monkeypatch.setattr(api, 'refill', lambda url: sent.append(url) or {'ok': True})
+	assert api.answer(salary.id, '70k')['finishing'] == []  # the notice period is still open
+	assert api.dismiss(notice.id)['finishing'] == ['https://jobs.lever.co/a/1']
+	assert sent == ['https://jobs.lever.co/a/1']
+	assert api.mark_submitted('https://jobs.lever.co/b/2')['ok']
+	assert [q.question for q in qs.open()] == [] and why.id not in [q.id for q in qs.open()]
+	assert [r.status for r in t.rows()] == ['needs_input', 'submitted']

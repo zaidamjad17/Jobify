@@ -10,8 +10,8 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 # A job counts toward the daily cap once the loop worked on it; a job skipped for not matching the criteria does not.
-COUNTED = frozenset({'filled', 'email_drafted', 'needs_input'})
-STATUSES = COUNTED | {'skipped', 'failed'}
+COUNTED = frozenset({'filled', 'email_drafted', 'needs_input', 'submitted'})
+STATUSES = COUNTED | {'skipped', 'failed'}  # submitted: the user marked it done (it is never applied to again)
 MAX_FAILED = 2  # attempts per job: after that a failing posting counts as seen (a board may keep listing it)
 # A cell starting with one of these is a formula in Excel: written with a leading apostrophe, read back without it
 FORMULA_START = ('=', '+', '-', '@', '\t', '\r')
@@ -73,6 +73,33 @@ class Tracker:
 					writer.writeheader()
 				writer.writerow({k: _to_cell(v) for k, v in asdict(row).items()})
 		return row
+
+	def latest(self, url: str) -> Row | None:
+		"""The newest row for this job (any link to it)."""
+		key = job_key(url)
+		return next((r for r in reversed(self.rows()) if r.url and job_key(r.url) == key), None)
+
+	def update(self, url: str, **values: str) -> Row:
+		"""Change the newest row of this job in place (a refill, or the user marking it submitted)."""
+		if 'status' in values and values['status'] not in STATUSES:
+			raise ValueError(f'status must be one of {", ".join(sorted(STATUSES))}, not {values["status"]!r}')
+		key = job_key(url)
+		with self._lock:
+			rows = self.rows()
+			index = next((i for i in range(len(rows) - 1, -1, -1) if rows[i].url and job_key(rows[i].url) == key), None)
+			if index is None:
+				raise ValueError('That job is not in the list.')
+			for name, value in values.items():
+				if name not in COLUMNS:
+					raise ValueError(f'unknown column {name!r}')
+				setattr(rows[index], name, value)
+			tmp = self.path.with_suffix('.tmp')
+			with tmp.open('w', newline='', encoding='utf-8-sig') as f:
+				writer = csv.DictWriter(f, fieldnames=COLUMNS)
+				writer.writeheader()
+				writer.writerows({k: _to_cell(v) for k, v in asdict(r).items()} for r in rows)
+			tmp.replace(self.path)
+			return rows[index]
 
 	def count_today(self, today: str | None = None) -> int:
 		today = today or datetime.now().strftime('%Y-%m-%d')

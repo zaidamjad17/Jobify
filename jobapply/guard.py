@@ -150,6 +150,25 @@ class SubmitGuard:
 			self._unlock(session)
 		return targets
 
+	def lock(self, targets: list[str]) -> list[str]:
+		"""Lock released tabs again (the agent goes back to finish them). Returns the ones still open."""
+		with self._state:
+			targets = [t for t in targets if t in self.pages]
+			self.released.difference_update(targets)
+			sessions = [s for s, t in self._sessions.items() if t in targets]
+		for session in sessions:
+			with contextlib.suppress(Exception):
+				self._send(
+					'Page.addScriptToEvaluateOnNewDocument', session, reply=self._script_added(session), source=self.source
+				)
+				self._send('Runtime.addBinding', session, name='__jobapplyBlocked')
+				# the open document: lock its guard, or install it if this document never had one
+				relock = f'window[{self.key!r}] ? (window[{self.key!r}].locked = true) : {self.source}'
+				self._send('Runtime.evaluate', session, expression=relock)
+				for ctx in list(self._contexts.get(session, ())):
+					self._send('Runtime.evaluate', session, expression=relock, contextId=ctx)
+		return targets
+
 	# CDP
 
 	def _send(self, method: str, session_id: str | None = None, reply: Callable[[dict], object] | None = None, **params) -> int:

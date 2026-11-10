@@ -1,5 +1,6 @@
 """JobApply's submit guard on a real headless Chrome: trusted clicks, keys and scripts cannot submit until release()."""
 
+import contextlib
 import time
 import urllib.parse
 
@@ -107,6 +108,35 @@ def test_guard_locks_new_document_before_page_scripts(chrome):
 			target, session = _open(cdp)
 			assert _eval(cdp, session, f'!!window[{guard.key!r}] && window[{guard.key!r}].locked') is True
 			assert target in guard.tabs_since(0)
+			cdp.send('Target.closeTarget', targetId=target)
+	finally:
+		guard.close()
+
+
+def test_a_released_tab_can_be_locked_again(chrome):
+	"""The agent goes back to a handed-over tab to fill answers the user gave: Submit is held again meanwhile."""
+	guard = SubmitGuard(chrome['ws'])
+	guard.start()
+	try:
+		with CDP(chrome['ws']) as cdp:
+			target, session = _open(cdp)
+			guard.release([target])
+			time.sleep(0.3)
+			_click(cdp, session, 'submit')
+			assert _counts(cdp, session)['clicks'] == 1
+			assert guard.lock([target]) == [target]
+			time.sleep(0.3)
+			_click(cdp, session, 'submit')
+			assert _counts(cdp, session)['clicks'] == 1  # held
+			cdp.send('Page.reload', session)  # a new document in that tab is locked too
+			time.sleep(1)
+			for _ in range(40):
+				with contextlib.suppress(CDPError):
+					if _eval(cdp, session, 'document.readyState === "complete" && typeof window.clicks === "number"'):
+						break
+				time.sleep(0.05)
+			_click(cdp, session, 'submit')
+			assert _counts(cdp, session)['clicks'] == 0
 			cdp.send('Target.closeTarget', targetId=target)
 	finally:
 		guard.close()

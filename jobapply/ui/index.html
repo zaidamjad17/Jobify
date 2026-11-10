@@ -53,6 +53,8 @@
 	.pill { padding: 1px 8px; border-radius: 10px; font-size: 12px; background: var(--chip); white-space: nowrap; }
 	.pill.filled, .pill.email_drafted { color: var(--ok); } .pill.needs_input { color: var(--warn); }
 	.pill.failed { color: var(--bad); } .pill.skipped { color: var(--muted); }
+	.pill.submitted { color: var(--ok); font-weight: 600; }
+	button.btn.small { padding: 2px 8px; font-size: 12px; }
 	.q { border-top: 1px solid var(--line); padding: 12px 0; }
 	.q:first-child { border-top: 0; }
 	.q .meta { color: var(--muted); font-size: 12px; margin: 2px 0 8px; }
@@ -99,7 +101,7 @@
 	<section id="questions">
 		<div class="card">
 			<h2>Questions from applications</h2>
-			<div class="hint">The agent left these fields empty and kept going. Your answer is saved to your profile, so it is used for every later application. Fill the field in the open tab yourself for the jobs already done.</div>
+			<div class="hint">The agent left these fields empty and kept going. Your answer is saved to your profile and used for every later application. When all questions of a job are answered (or closed with Done / Skip), JobApply goes back to that application and fills them in for you.</div>
 			<div id="qlist"></div>
 		</div>
 	</section>
@@ -300,26 +302,45 @@ function renderQuestions(qs) {
 	for (const [id, value] of Object.entries(typed)) if ($(id)) $(id).value = value;
 	if (focused && $(focused)) $(focused).focus();
 	document.querySelectorAll('[data-answer]').forEach(b => b.onclick = async () => {
-		await call('answer', b.dataset.answer, $('a_' + b.dataset.answer).value); toast('Saved to your profile.'); refresh(false);
+		const r = await call('answer', b.dataset.answer, $('a_' + b.dataset.answer).value);
+		toast(r.finishing && r.finishing.length ? `Saved. Going back to fill ${r.finishing.length} application(s).` : 'Saved to your profile.');
+		refresh(false);
 	});
 	document.querySelectorAll('[data-answer]').forEach(b => {
 		const input = $('a_' + b.dataset.answer);
 		if (input) input.onkeydown = e => { if (e.key === 'Enter') b.click(); };
 	});
-	document.querySelectorAll('[data-done]').forEach(b => b.onclick = async () => { await call('dismiss', b.dataset.done); refresh(false); });
+	document.querySelectorAll('[data-done]').forEach(b => b.onclick = async () => {
+		const r = await call('dismiss', b.dataset.done);
+		if (r.finishing && r.finishing.length) toast(`Going back to fill ${r.finishing.length} application(s).`);
+		refresh(false);
+	});
 }
 
 function renderRows(rows) {
-	$('rows').innerHTML = rows.length ? rows.map(r => `<tr>
+	$('rows').innerHTML = rows.length ? rows.map(r => {
+		const open = ['needs_input', 'filled', 'email_drafted', 'failed'].includes(r.status);
+		const actions = [
+			r.tab_id && r.status !== 'submitted' ? `<a data-tab-id="${esc(r.tab_id.split(' ').pop())}">show tab</a>` : '',
+			open ? `<a data-refill="${esc(r.url)}" title="Go back to this application and fill what your answers now cover">fill again</a>` : '',
+			open ? `<button class="btn ghost small" data-submitted="${esc(r.url)}" title="You submitted it: never apply to it again">Submitted ✓</button>` : '',
+		].filter(Boolean).join(' · ');
+		return `<tr>
 		<td>${esc(r.date)}<br><span class="hint">${esc(r.time)}</span></td>
-		<td><b>${esc(r.company || '-')}</b><br>${esc(r.title)}<br><a data-url="${esc(r.url)}">posting</a>${r.tab_id ? ` · <a data-tab-id="${esc(r.tab_id)}">show tab</a>` : ''}</td>
+		<td><b>${esc(r.company || '-')}</b><br>${esc(r.title)}<br><a data-url="${esc(r.url)}">posting</a>${actions ? ' · ' + actions : ''}</td>
 		<td><span class="pill ${esc(r.status)}">${esc(r.status.replace('_', ' '))}</span></td>
 		<td>${r.resume ? `<a data-open="${esc(r.resume)}">resume</a>` : ''}${r.cover_letter ? `<br><a data-open="${esc(r.cover_letter)}">cover letter</a>` : ''}</td>
-		<td>${esc(r.notes)}${r.unanswered_questions ? `<div class="hint">Unanswered: ${esc(r.unanswered_questions)}</div>` : ''}</td></tr>`).join('')
-		: '<tr><td colspan="5" class="empty">No applications yet.</td></tr>';
+		<td>${esc(r.notes)}${r.unanswered_questions ? `<div class="hint">Waiting on: ${esc(r.unanswered_questions)}</div>` : ''}</td></tr>`;
+	}).join('') : '<tr><td colspan="5" class="empty">No applications yet.</td></tr>';
 	document.querySelectorAll('[data-open]').forEach(a => a.onclick = () => call('open_path', a.dataset.open));
 	document.querySelectorAll('[data-url]').forEach(a => a.onclick = () => call('open_path', a.dataset.url));
 	document.querySelectorAll('[data-tab-id]').forEach(a => a.onclick = () => call('focus_tab', a.dataset.tabId));
+	document.querySelectorAll('[data-refill]').forEach(a => a.onclick = async () => {
+		await call('refill', a.dataset.refill); toast('Going back to that application to fill it.');
+	});
+	document.querySelectorAll('[data-submitted]').forEach(b => b.onclick = async () => {
+		await call('mark_submitted', b.dataset.submitted); toast('Marked submitted. It will not be applied to again.'); refresh(false);
+	});
 }
 
 function renderState(st) {

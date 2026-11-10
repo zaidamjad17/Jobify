@@ -53,10 +53,20 @@ Two or three sentences about you.
 -
 
 ## Standard answers
-- Desired salary:
-- Willing to relocate:
+- Desired salary / salary range (say the currency):
+- Notice period / availability to start:
+- Needs visa sponsorship now or in the future (yes/no):
+- Authorized to work in (countries):
+- Willing to relocate (yes/no, where):
+- Languages and level (e.g. English C1, Urdu native):
 - How did you hear about us: Job board
 - Gender / race / veteran / disability (optional, "Prefer not to say" is fine):
+
+## Stories (for "tell us about..." questions; 3-5 sentences each)
+- A project you are proud of (the problem, your part, the result, what you would do differently):
+- A time you took ownership of something nobody asked you to do:
+- A measurable result you achieved (with numbers):
+- Why this kind of role, and what you want to be able to do in two years:
 
 ## Saved answers
 """
@@ -185,5 +195,5 @@ class Questions:
 			q = next((q for q in questions if q.id == question_id), None)
 			if q is None:
 				raise ValueError('That question is gone.')
-			q.answer = '(dismissed)'
+			q.answer = '(dismissed)'  # runner.DISMISSED
 			self._write(questions)
