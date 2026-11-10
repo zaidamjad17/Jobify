@@ -1,0 +1,387 @@
+"""The loop: pick the next job (pasted URLs first, then board searches), open it in a new tab, let the agent fill it up to
+Submit, hand the tab to the user (the guard unlocks it), log the row, and go on until the daily cap.
+
+Runs on its own thread with its own event loop; the UI calls start(), pause(), resume() and stop() and gets events
+through on_event(dict)."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import threading
+import time
+from collections import deque
+from collections.abc import Callable
+from datetime import datetime
+from typing import Any
+
+from jobapply import documents
+from jobapply.cdp import print_pdf
+from jobapply.guard import SubmitGuard
+from jobapply.llm import agent_llm, writer_model
+from jobapply.paths import app_home, sub
+from jobapply.profile import Question, Questions, read_text, tone_from_criteria
+from jobapply.prompts import APPLY_TASK, BOARD_HINTS, RULES, SEARCH_TASK, FoundJobs, JobOutcome
+from jobapply.settings import BOARDS, Settings
+from jobapply.tracker import Row, Tracker
+
+logger = logging.getLogger('jobapply')
+APPLY_MAX_STEPS, APPLY_TIMEOUT_S = 90, 1500
+SEARCH_MAX_STEPS, SEARCH_TIMEOUT_S = 40, 600
+SEARCH_BATCH = 5
+COUNTED_OUTCOMES = ('filled', 'email_drafted', 'needs_input')
+
+
+def tracker() -> Tracker:
+	return Tracker(app_home() / 'applications.csv')
+
+
+def questions() -> Questions:
+	return Questions(app_home() / 'questions.json')
+
+
+def build_rules(profile: str, criteria: str) -> str:
+	return RULES.replace('{profile}', profile).replace('{criteria}', criteria)  # the files may hold braces
+
+
+class Runner:
+	def __init__(self, settings: Settings, on_event: Callable[[dict], None]):
+		self.settings = settings
+		self.on_event = on_event
+		self.state = 'idle'  # idle | starting | running | paused | stopping
+		self.tracker, self.questions = tracker(), questions()
+		self._thread: threading.Thread | None = None
+		self._loop: asyncio.AbstractEventLoop | None = None
+		self._task: asyncio.Task | None = None
+		self._resume = threading.Event()
+		self._resume.set()
+		self._stop = False
+		self.browser: Any = None
+		self.guard: SubmitGuard | None = None
+		self.current: dict[str, str] = {}
+
+	# control (any thread)
+
+	def start(self) -> None:
+		if self._thread and self._thread.is_alive():
+			if self.state == 'paused':
+				self.resume()
+			return
+		self._stop = False
+		self._resume.set()
+		self._thread = threading.Thread(target=self._main, daemon=True, name='jobapply-runner')
+		self._thread.start()
+
+	def pause(self) -> None:
+		"""Finishes the current job, then waits."""
+		if self.state in ('running', 'starting'):
+			self._resume.clear()
+			self._set_state('paused')
+
+	def resume(self) -> None:
+		self._resume.set()
+		if self.state == 'paused':
+			self._set_state('running')
+
+	def stop(self) -> None:
+		"""Stops now: the job in progress is cancelled (its tab stays open). The browser stays open with its tabs."""
+		self._stop = True
+		self._resume.set()
+		self._set_state('stopping')
+		if self._loop and self._task:
+			self._loop.call_soon_threadsafe(self._task.cancel)
+
+	# internals
+
+	def _emit(self, kind: str, **data: Any) -> None:
+		with contextlib.suppress(Exception):
+			self.on_event({'kind': kind, 'time': datetime.now().strftime('%H:%M:%S'), **data})
+
+	def _set_state(self, state: str) -> None:
+		self.state = state
+		self._emit('state', state=state, today=self.tracker.count_today(), cap=self.settings.daily_cap)
+
+	def _log(self, text: str, level: str = 'info') -> None:
+		getattr(logger, 'warning' if level == 'error' else 'info')(text)
+		self._emit('log', text=text, level=level)
+
+	def _main(self) -> None:
+		self._loop = asyncio.new_event_loop()
+		try:
+			self._task = self._loop.create_task(self._run())
+			self._loop.run_until_complete(self._task)
+		except asyncio.CancelledError:
+			self._log('Stopped.')
+		except Exception as e:
+			logger.exception('runner failed')
+			self._log(f'Stopped: {e}', 'error')
+		finally:
+			with contextlib.suppress(Exception):
+				self._loop.run_until_complete(self._loop.shutdown_asyncgens())
+			self._loop.close()
+			self._loop = self._task = None
+			self.current = {}
+			self._set_state('idle')
+
+	async def _run(self) -> None:
+		self._set_state('starting')
+		s = self.settings
+		llm = agent_llm(s)
+		writer = writer_model(llm)
+		read_text(s.profile_path, 'profile')
+		read_text(s.criteria_path, 'job criteria')
+		await self._start_browser()
+		self._set_state('running' if self._resume.is_set() else 'paused')
+		queue: deque[dict] = deque({'url': u, 'board': ''} for u in s.job_urls)
+		boards = [b for b in s.boards if b in BOARDS]
+		empty_boards: set[str] = set()
+		board_index = 0
+		while not self._stop:
+			await self._paused()
+			if self._stop:
+				break
+			if self.tracker.count_today() >= s.daily_cap:
+				self._log(f'Daily limit reached ({s.daily_cap} jobs). Review your open tabs; the count resets at midnight.')
+				break
+			if not queue:
+				if not boards or empty_boards >= set(boards):
+					self._log('No new matching jobs found on the selected boards. Add job URLs or widen your criteria.')
+					break
+				board = boards[board_index % len(boards)]
+				board_index += 1
+				if board in empty_boards:
+					continue
+				found = await self._search(board, llm)
+				fresh = [j for j in found if not self.tracker.seen(j['url'])]
+				if not fresh:
+					empty_boards.add(board)
+				queue.extend(fresh)
+				continue
+			job = queue.popleft()
+			if self.tracker.seen(job['url']):
+				continue
+			await self._apply(job, llm, writer)
+		self._log('Loop finished. Your filled tabs stay open in the JobApply browser for review.')
+
+	async def _paused(self) -> None:
+		await asyncio.to_thread(self._resume.wait)  # a threading.Event: pause()/resume() come from the UI thread
+
+	async def _start_browser(self) -> None:
+		from browser_use import Browser
+
+		if self.browser is None:
+			self.browser = Browser(
+				'chromium',
+				user_data_dir=sub('browser-profile'),  # logins (LinkedIn, Indeed, Gmail) are kept here
+				keep_alive=True,
+				executable_path=self.settings.browser_executable or None,
+			)
+		first = self.guard is None
+		await self.browser.start()  # also starts it again when the user closed the window
+		ws = self._ws()
+		if self.guard is None or self.guard.ws_url != ws or not self.guard.alive:
+			if self.guard is not None:
+				self.guard.close()
+			self.guard = SubmitGuard(ws, on_block=lambda tab, text: self._emit('blocked', tab=tab, text=text))
+			await asyncio.to_thread(self.guard.start)
+		if first:
+			self._log('Browser ready. Log in to LinkedIn, Indeed and Gmail in it once; the logins are kept.')
+
+	def _ws(self) -> str:
+		return self.browser._daemon_env['BU_CDP_WS']
+
+	def _open_tab(self, url: str) -> str:
+		"""A new tab on url, and the agent's REPL attached to it (the next run starts there)."""
+		from browser_use.browser.browser import _daemon_cdp, _daemon_request
+
+		name = self.browser.name
+		target = _daemon_cdp(name, 'Target.createTarget', url=url)['targetId']
+		session = _daemon_cdp(name, 'Target.attachToTarget', targetId=target, flatten=True)['sessionId']
+		_daemon_request(name, {'meta': 'set_session', 'session_id': session, 'target_id': target})
+		self.browser._agent_tab = target
+		return target
+
+	def _close_tabs(self, targets: list[str]) -> None:
+		from browser_use.browser.browser import _daemon_cdp
+
+		for t in targets:
+			with contextlib.suppress(Exception):
+				_daemon_cdp(self.browser.name, 'Target.closeTarget', targetId=t)
+
+	async def _run_agent(self, task: str, schema: Any, tools: Any, max_steps: int, timeout: float) -> Any:
+		from browser_use import Agent
+
+		profile = read_text(self.settings.profile_path, 'profile')  # read per job: answers saved meanwhile count
+		criteria = read_text(self.settings.criteria_path, 'job criteria')
+		agent = Agent(
+			task,
+			llm=agent_llm(self.settings),
+			browser=self.browser,
+			tools=tools,
+			output_model_schema=schema,
+			extend_system_message=build_rules(profile, criteria),
+			workspace=sub('workspace'),
+		)
+		try:
+			return await agent.run(max_steps=max_steps, timeout=timeout)
+		finally:
+			with contextlib.suppress(Exception):
+				await agent.close()
+
+	async def _search(self, board: str, llm: Any) -> list[dict]:
+		from browser_use import Tools
+
+		label, start_url = BOARDS[board]
+		self._log(f'Searching {label} for new jobs...')
+		self.current = {'phase': 'search', 'board': label}
+		self._emit('current', **self.current)
+		tools = Tools()
+
+		@tools.action('True when the user already has this job in their list (applied, skipped or in progress).')
+		def already_seen(url: str) -> bool:
+			return self.tracker.seen(url)
+
+		await self._start_browser()
+		mark = self.guard.mark() if self.guard else 0
+		await asyncio.to_thread(self._open_tab, start_url)
+		task = (
+			SEARCH_TASK.replace('{count}', str(SEARCH_BATCH))
+			.replace('{board}', label)
+			.replace('{board_id}', board)
+			.replace('{start_url}', start_url)
+			.replace('{board_hint}', BOARD_HINTS.get(board, ''))
+		)
+		try:
+			result = await self._run_agent(task, FoundJobs, tools, SEARCH_MAX_STEPS, SEARCH_TIMEOUT_S)
+		finally:
+			if self.guard:  # search tabs are not for review
+				await asyncio.to_thread(self._close_tabs, self.guard.tabs_since(mark))
+		found = result.structured_output.jobs if result.structured_output else []
+		jobs = [{'url': j.url, 'board': j.board or board, 'company': j.company, 'title': j.title} for j in found if j.url]
+		self._log(f'{label}: {len(jobs)} new job(s) found.' if jobs else f'{label}: nothing new.')
+		return jobs
+
+	async def _apply(self, job: dict, llm: Any, writer: Any) -> None:
+		from browser_use import Tools
+
+		s = self.settings
+		url = job['url']
+		self.current = {'phase': 'apply', 'url': url, 'company': job.get('company', ''), 'title': job.get('title', '')}
+		self._emit('current', **self.current)
+		self._log(f'Applying: {job.get("title") or url} {("at " + job["company"]) if job.get("company") else ""}'.strip())
+		docs: dict[str, str] = {}
+		asked: list[str] = []
+		tools = Tools()
+
+		@tools.action(
+			'Make a resume PDF and cover letter PDF tailored to this job from the profile. Call once per job with the '
+			'full job description. Returns the file paths and the letter text.'
+		)
+		async def prepare_documents(company: str, title: str, job_description: str) -> dict:
+			if docs:
+				return docs
+			profile = read_text(s.profile_path, 'profile')
+			criteria = read_text(s.criteria_path, 'job criteria')
+			tone = tone_from_criteria(criteria) or s.cover_letter_tone
+			template = read_text(s.resume_template_path, 'resume template') if s.resume_template_path else None
+			self._log(f'Writing resume and cover letter for {company}...')
+			tailored = await documents.tailor(writer, profile, job_description, company, title, tone)
+			ws = self._ws()
+			paths = await asyncio.to_thread(
+				documents.write_documents, tailored, company, title, template, lambda h, p: print_pdf(ws, h, p)
+			)
+			docs.update(paths)
+			self.current.update(company=company, title=title)
+			self._emit('current', **self.current)
+			return docs
+
+		@tools.action(
+			'Send the user a question the profile does not answer (they answer later in the app; the answer is saved to '
+			'the profile for next time). Leave the field empty and keep going.'
+		)
+		def ask_user(question: str, field: str = '') -> str:
+			q = self.questions.ask(
+				Question(
+					question=question,
+					field_hint=field,
+					company=self.current.get('company', ''),
+					title=self.current.get('title', ''),
+					url=url,
+				)
+			)
+			asked.append(question)
+			self._emit('question', id=q.id, question=q.question)
+			return 'Sent to the user. Leave this field empty and continue with the rest of the form.'
+
+		await self._start_browser()
+		mark = self.guard.mark() if self.guard else 0
+		tab = await asyncio.to_thread(self._open_tab, url)
+		started = time.monotonic()
+		outcome: JobOutcome | None = None
+		error = ''
+		try:
+			result = await self._run_agent(APPLY_TASK.replace('{url}', url), JobOutcome, tools, APPLY_MAX_STEPS, APPLY_TIMEOUT_S)
+			outcome = result.structured_output
+			if outcome is None:
+				error = result.error or f'the agent stopped ({result.status}) before it finished'
+		except asyncio.CancelledError:
+			error = 'stopped by you'
+			self._finish(job, tab, mark, None, docs, asked, error)
+			raise
+		except Exception as e:
+			logger.exception('apply failed')
+			error = str(e)
+		self._finish(job, tab, mark, outcome, docs, asked, error)
+		self._log(f'Done in {time.monotonic() - started:.0f}s.')
+
+	def _finish(
+		self, job: dict, tab: str, mark: int, outcome: JobOutcome | None, docs: dict, asked: list[str], error: str
+	) -> None:
+		tabs = self.guard.tabs_since(mark) if self.guard else [tab]
+		status = outcome.status if outcome else 'failed'
+		if status == 'filled' and asked:  # a field was left empty for the user
+			status = 'needs_input'
+		if status == 'skipped':
+			self._close_tabs(tabs)
+			tabs = []
+		elif self.guard:  # the user reviews and submits in these tabs
+			self.guard.release(tabs)
+		questions: list[str] = list(dict.fromkeys([*(outcome.unanswered_questions if outcome else []), *asked]))
+		row = self.tracker.add(
+			Row(
+				company=(outcome.company if outcome else '') or job.get('company', ''),
+				title=(outcome.title if outcome else '') or job.get('title', ''),
+				url=job['url'],
+				board=(outcome.board if outcome else '') or job.get('board', ''),
+				status=status,
+				tab_id=tab if tabs else '',
+				resume=docs.get('resume_pdf', ''),
+				cover_letter=docs.get('cover_letter_pdf', ''),
+				unanswered_questions=' | '.join(questions),
+				notes=(outcome.notes if outcome else '') or error,
+			)
+		)
+		self.current = {}
+		self._emit('job', row=row.__dict__, today=self.tracker.count_today(), cap=self.settings.daily_cap)
+
+	def focus_tab(self, tab: str) -> bool:
+		"""Bring a job's tab to the front for review."""
+		if not (self.browser and self.browser.name and tab):
+			return False
+		from browser_use.browser.browser import _daemon_cdp
+
+		try:
+			_daemon_cdp(self.browser.name, 'Target.activateTarget', targetId=tab)
+			return True
+		except Exception:
+			return False
+
+	async def close_browser(self) -> None:
+		if self.guard:
+			self.guard.close()
+			self.guard = None
+		if self.browser:
+			with contextlib.suppress(Exception):
+				await self.browser.stop()
+			self.browser = None

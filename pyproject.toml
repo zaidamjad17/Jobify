@@ -91,7 +91,7 @@ skip-magic-trailing-comma = false
 [tool.pyright]
 typeCheckingMode = "basic"
 pythonVersion = "3.11"
-include = ["browser_use", "examples"]  # tests use Pydantic AI test internals
+include = ["browser_use", "examples", "jobapply"]  # tests use Pydantic AI test internals
 exclude = [".venv/", ".venv*/", ".git/", "__pycache__/", "**/site-packages/"]
 venvPath = "."
 venv = ".venv"
@@ -134,4 +134,8 @@ dev = [
     "codespell==2.4.1",
     "pyright==1.1.408",
     "pyyaml==6.0.3",  # tests/ci/test_workflows.py reads the workflow files
+]
+# JobApply desktop app (jobapply/, not part of the browser-use wheel): uv sync --group jobapply; uv run python -m jobapply
+jobapply = [
+    "pywebview==6.2.1",
 ]
