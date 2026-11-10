@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 import threading
 import time
 from collections import deque
@@ -16,18 +17,24 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from jobapply import documents
+from jobapply import audit, documents
 from jobapply.cdp import print_pdf
 from jobapply.guard import SubmitGuard
 from jobapply.llm import agent_llm, writer_model
 from jobapply.paths import app_home, sub
 from jobapply.profile import Question, Questions, read_text, tone_from_criteria
+from jobapply.profile import _norm as norm_question
 from jobapply.prompts import APPLY_TASK, BOARD_HINTS, RULES, SEARCH_TASK, FoundJobs, JobOutcome
 from jobapply.settings import BOARDS, Settings
 from jobapply.tracker import Row, Tracker
 
 logger = logging.getLogger('jobapply')
 APPLY_MAX_STEPS, APPLY_TIMEOUT_S = 90, 1500
+# A provider that is busy (503, 429, overloaded) after the library's own retry: wait and run the job again
+RETRY_WAITS_S = (20.0, 60.0)
+BUSY = re.compile(
+	r'ModelUnavailableError|ModelRateLimitError|ModelServerError|ModelConnectionError|\b(429|500|502|503|504)\b|overloaded|high demand|RESOURCE_EXHAUSTED|UNAVAILABLE'
+)
 SEARCH_MAX_STEPS, SEARCH_TIMEOUT_S = 40, 600
 SEARCH_BATCH = 5
 COUNTED_OUTCOMES = ('filled', 'email_drafted', 'needs_input')
@@ -224,7 +231,13 @@ class Runner:
 			workspace=sub('workspace'),
 		)
 		try:
-			return await agent.run(max_steps=max_steps, timeout=timeout)
+			for wait in (*RETRY_WAITS_S, None):
+				result = await agent.run(max_steps=max_steps, timeout=timeout)
+				if wait is None or result.status != 'error' or not BUSY.search(result.error or ''):
+					return result
+				self._log(f'The AI model is busy; trying again in {wait:g}s.', 'error')
+				await asyncio.sleep(wait)
+			raise AssertionError('unreachable')
 		finally:
 			with contextlib.suppress(Exception):
 				await agent.close()
@@ -340,6 +353,25 @@ class Runner:
 	) -> None:
 		tabs = self.guard.tabs_since(mark) if self.guard else [tab]
 		status = outcome.status if outcome else 'failed'
+		if status in ('filled', 'email_drafted', 'needs_input', 'failed') and self.browser is not None:
+			try:  # answers the profile does not give (salary, start date, visa...) are emptied and asked
+				profile = read_text(self.settings.profile_path, 'profile')
+				for item in audit.correct_contacts(self._ws(), tabs, profile):
+					self._log(
+						f'Corrected {item["kind"]}: "{item["before"][:60]}" -> "{item["after"][:60]}" (from your profile).',
+						'error',
+					)
+				for item in audit.take_back(self._ws(), tabs, profile):
+					question = (item['label'] or item['topic']).rstrip(' *')
+					self.questions.ask(
+						Question(question=question, field_hint=item['topic'], company=job.get('company', ''), url=job['url'])
+					)
+					asked.append(question)
+					self._log(
+						f'Cleared a guessed answer ({item["topic"]}): "{question[:80]}". It is in Questions for you.', 'error'
+					)
+			except Exception as e:
+				logger.warning('answer audit failed: %s', e)
 		if status == 'filled' and asked:  # a field was left empty for the user
 			status = 'needs_input'
 		if status == 'skipped':
@@ -347,7 +379,11 @@ class Runner:
 			tabs = []
 		elif self.guard:  # the user reviews and submits in these tabs
 			self.guard.release(tabs)
-		questions: list[str] = list(dict.fromkeys([*(outcome.unanswered_questions if outcome else []), *asked]))
+		all_questions: list[str] = [*(outcome.unanswered_questions if outcome else []), *asked]
+		unique: dict[str, str] = {}
+		for q in all_questions:  # one entry per question, however it was punctuated
+			unique.setdefault(norm_question(q), q)
+		questions = list(unique.values())
 		row = self.tracker.add(
 			Row(
 				company=(outcome.company if outcome else '') or job.get('company', ''),

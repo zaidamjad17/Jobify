@@ -232,3 +232,12 @@ def test_chatgpt_login_pkce_flow(monkeypatch):
 	assert chatgpt_auth.status() == {'signed_in': False}
 	with pytest.raises(chatgpt_auth.AuthError, match='Not signed in'):
 		chatgpt_auth.access_token(cfg)
+
+
+def test_profile_topics_count_only_lines_with_a_value():
+	from jobapply.audit import missing_topics
+	from jobapply.profile import STARTER_PROFILE
+
+	assert set(missing_topics(STARTER_PROFILE)) == set(missing_topics(''))  # an empty starter answers nothing
+	filled = '- Desired salary: 70k EUR\n- Needs visa sponsorship (yes/no): no\n- Q: Willing to relocate to Berlin?\n  A: Yes\n'
+	assert set(missing_topics(filled)) == {'notice', 'authorization'}
