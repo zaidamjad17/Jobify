@@ -241,3 +241,35 @@ def test_profile_topics_count_only_lines_with_a_value():
 	assert set(missing_topics(STARTER_PROFILE)) == set(missing_topics(''))  # an empty starter answers nothing
 	filled = '- Desired salary: 70k EUR\n- Needs visa sponsorship (yes/no): no\n- Q: Willing to relocate to Berlin?\n  A: Yes\n'
 	assert set(missing_topics(filled)) == {'notice', 'authorization'}
+
+
+def test_a_job_that_keeps_failing_is_not_tried_forever(tmp_path):
+	"""Codex review: a failed posting counted as unseen and failed jobs do not count toward the cap, so a board that
+	keeps listing a broken posting kept the loop applying (and paying) forever. One retry, then it counts as seen."""
+	t = Tracker(tmp_path / 'a.csv')
+	url = 'https://x.example/jobs/9'
+	t.add(Row(url=url, status='failed'))
+	assert not t.seen(url)  # one more try
+	t.add(Row(url=url + '?utm_source=feed', status='failed'))
+	assert t.seen(url)
+
+
+def test_csv_cells_that_excel_would_run_as_formulas_are_written_as_text(tmp_path):
+	"""Codex review: a listing titled '=HYPERLINK(...)' became a live formula in Excel."""
+	t = Tracker(tmp_path / 'a.csv')
+	t.add(
+		Row(
+			company='=HYPERLINK("http://evil","x")',
+			title='+1 Engineer',
+			notes='@SUM(A1)',
+			url='https://x.example/1',
+			status='filled',
+		)
+	)
+	import csv
+
+	with (tmp_path / 'a.csv').open(newline='', encoding='utf-8-sig') as f:
+		cells = next(csv.DictReader(f))  # what Excel reads
+	assert (cells['company'], cells['title'], cells['notes']) == ('\'=HYPERLINK("http://evil","x")', "'+1 Engineer", "'@SUM(A1)")
+	row = t.rows()[0]
+	assert (row.company, row.title, row.notes) == ('=HYPERLINK("http://evil","x")', '+1 Engineer', '@SUM(A1)')

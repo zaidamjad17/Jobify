@@ -12,6 +12,9 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 # A job counts toward the daily cap once the loop worked on it; a job skipped for not matching the criteria does not.
 COUNTED = frozenset({'filled', 'email_drafted', 'needs_input'})
 STATUSES = COUNTED | {'skipped', 'failed'}
+MAX_FAILED = 2  # attempts per job: after that a failing posting counts as seen (a board may keep listing it)
+# A cell starting with one of these is a formula in Excel: written with a leading apostrophe, read back without it
+FORMULA_START = ('=', '+', '-', '@', '\t', '\r')
 # query parameters that identify a job on the boards; every other one (utm_*, refId, trackingId, ...) is dropped
 ID_PARAMS = frozenset({'jk', 'vjk', 'currentjobid', 'gh_jid', 'jobid', 'job_id', 'id', 'token', 'lever-source'})
 
@@ -52,7 +55,7 @@ class Tracker:
 	def rows(self) -> list[Row]:
 		try:
 			with self.path.open(newline='', encoding='utf-8-sig') as f:
-				return [Row(**{k: r.get(k) or '' for k in COLUMNS}) for r in csv.DictReader(f)]
+				return [Row(**{k: _from_cell(r.get(k) or '') for k in COLUMNS}) for r in csv.DictReader(f)]
 		except FileNotFoundError:
 			return []
 
@@ -68,7 +71,7 @@ class Tracker:
 				writer = csv.DictWriter(f, fieldnames=COLUMNS)
 				if new:
 					writer.writeheader()
-				writer.writerow(asdict(row))
+				writer.writerow({k: _to_cell(v) for k, v in asdict(row).items()})
 		return row
 
 	def count_today(self, today: str | None = None) -> int:
@@ -76,5 +79,20 @@ class Tracker:
 		return sum(1 for r in self.rows() if r.date == today and r.status in COUNTED)
 
 	def seen(self, url: str) -> bool:
+		"""Done, skipped or in progress before; or failed MAX_FAILED times (a failed job gets one more try)."""
 		key = job_key(url)
-		return any(job_key(r.url) == key for r in self.rows() if r.url and r.status != 'failed')
+		failed = 0
+		for r in self.rows():
+			if r.url and job_key(r.url) == key:
+				if r.status != 'failed':
+					return True
+				failed += 1
+		return failed >= MAX_FAILED
+
+
+def _to_cell(value: str) -> str:
+	return "'" + value if value.startswith(FORMULA_START) else value
+
+
+def _from_cell(value: str) -> str:
+	return value[1:] if value.startswith("'") and value[1:].startswith(FORMULA_START) else value
