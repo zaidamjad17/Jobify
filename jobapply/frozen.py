@@ -32,7 +32,7 @@ def restore_std_streams() -> None:
 					stream = os.fdopen(fd, mode, buffering=1, encoding='utf-8', errors='replace')
 				except OSError:
 					stream = None
-		setattr(sys, name, stream or open(os.devnull, mode, encoding='utf-8'))  # noqa: SIM115
+		setattr(sys, name, stream or open(os.devnull, mode, encoding='utf-8'))
 
 
 def dispatch(argv: list[str]) -> bool:

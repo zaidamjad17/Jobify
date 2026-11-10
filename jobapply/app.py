@@ -104,7 +104,7 @@ class Api:
 	# files
 
 	def pick_file(self, kind: str) -> dict:
-		import webview
+		import webview  # pyright: ignore[reportMissingImports]
 
 		types = {
 			'profile': ('Markdown (*.md;*.txt)', 'All files (*.*)'),
@@ -229,9 +229,9 @@ class Api:
 
 def setup_logging() -> None:
 	if sys.stdout is None:  # the windowed exe has no console
-		sys.stdout = open(os.devnull, 'w')  # noqa: SIM115
+		sys.stdout = open(os.devnull, 'w')
 	if sys.stderr is None:
-		sys.stderr = open(os.devnull, 'w')  # noqa: SIM115
+		sys.stderr = open(os.devnull, 'w')
 	handler = logging.FileHandler(app_home() / 'jobapply.log', encoding='utf-8')
 	handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(name)s: %(message)s'))
 	for name in ('jobapply', 'browser_use'):
@@ -248,7 +248,7 @@ def main() -> None:
 	os.environ.setdefault('ANONYMIZED_TELEMETRY', 'false')
 	setup_logging()
 	try:
-		import webview
+		import webview  # pyright: ignore[reportMissingImports]
 	except ImportError:
 		raise SystemExit("JobApply's window needs pywebview: uv sync --extra jobapply") from None
 

@@ -121,7 +121,7 @@ def login(cfg: ChatGPTLogin, open_browser=webbrowser.open) -> dict[str, Any]:
 	done = threading.Event()
 
 	class Callback(http.server.BaseHTTPRequestHandler):
-		def do_GET(self) -> None:  # noqa: N802
+		def do_GET(self) -> None:
 			url = urllib.parse.urlsplit(self.path)
 			if url.path != CALLBACK_PATH:
 				self.send_error(404)
