@@ -273,3 +273,34 @@ def test_csv_cells_that_excel_would_run_as_formulas_are_written_as_text(tmp_path
 	assert (cells['company'], cells['title'], cells['notes']) == ('\'=HYPERLINK("http://evil","x")', "'+1 Engineer", "'@SUM(A1)")
 	row = t.rows()[0]
 	assert (row.company, row.title, row.notes) == ('=HYPERLINK("http://evil","x")', '+1 Engineer', '@SUM(A1)')
+
+
+def test_login_browser_opens_the_profile_without_remote_control(home, monkeypatch):
+	"""User report: Google refused to sign in ("This browser or app may not be secure") in the JobApply browser, which
+	runs with a remote debugging port. Logins now happen in the same profile opened normally, and Start waits until
+	that window is closed (one profile can be open in one browser only)."""
+	from jobapply import app
+
+	launched = []
+
+	class Proc:
+		alive = True
+
+		def __init__(self, args, **kw):
+			launched.append(args)
+
+		def poll(self):
+			return None if Proc.alive else 0
+
+	monkeypatch.setattr(app.subprocess, 'Popen', Proc)
+	monkeypatch.setattr('browser_use.browser.local.find_binary', lambda path=None, **kw: '/opt/chrome')
+	Settings(gemini_api_key='k').save()
+	api = app.Api()
+	assert api.open_login_browser() == {'ok': True}
+	args = launched[0]
+	assert args[0] == '/opt/chrome' and f'--user-data-dir={home / "browser-profile"}' in args
+	assert not any(a.startswith('--remote-debugging') or 'automation' in a for a in args)
+	assert any('accounts.google.com' in a for a in args) and any('linkedin.com' in a for a in args)
+	assert 'close the login browser' in api.start()['error'].lower()
+	Proc.alive = False
+	assert 'close the login browser' not in str(api.start().get('error', '')).lower()

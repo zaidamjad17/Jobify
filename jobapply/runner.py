@@ -193,7 +193,9 @@ class Runner:
 			self.guard = SubmitGuard(ws, on_block=lambda tab, text: self._emit('blocked', tab=tab, text=text))
 			await asyncio.to_thread(self.guard.start)
 		if first:
-			self._log('Browser ready. Log in to LinkedIn, Indeed and Gmail in it once; the logins are kept.')
+			self._log(
+				'Browser ready. Not logged in somewhere? Stop, use Setup > Log in to sites, close that window, Start again.'
+			)
 
 	def _ws(self) -> str:
 		return self.browser._daemon_env['BU_CDP_WS']

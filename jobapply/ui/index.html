@@ -129,6 +129,11 @@
 			<div class="hint">The profile holds everything about you (contact details, experience, education, skills, standard answers). The criteria say which jobs you want. A "Cover letter tone:" line in the criteria overrides the tone here. Templates use {{name}}, {{#experience}}...{{/experience}} and so on (see the built-in one).</div>
 		</div>
 		<div class="card">
+			<h2>Logins</h2>
+			<div class="row"><button class="btn" id="loginbrowser">Log in to sites</button>
+				<span class="hint">Opens the JobApply browser normally (Google, LinkedIn, Indeed). Sign in, close that window, then press Start. Google blocks sign-in while the browser is remote-controlled, so log in here, not during a run.</span></div>
+		</div>
+		<div class="card">
 			<h2>AI model</h2>
 			<div class="grid">
 				<label>Provider</label>
@@ -239,6 +244,7 @@ $('chatgpt_login').onclick = async () => {
 	toast('Finish signing in in your web browser...', 8000);
 	const r = await call('chatgpt_login'); toast('Signed in' + (r.email ? ' as ' + r.email : '') + '.'); refresh(true);
 };
+$('loginbrowser').onclick = async () => { await call('open_login_browser'); toast('Sign in, then close that browser window and press Start.', 8000); };
 $('chatgpt_logout').onclick = async () => { await call('chatgpt_logout'); refresh(true); };
 
 $('start').onclick = async () => {

@@ -18,13 +18,19 @@ from pathlib import Path
 from typing import Any
 
 from jobapply import __version__
-from jobapply.paths import app_home, resource
+from jobapply.paths import app_home, resource, sub
 from jobapply.profile import STARTER_CRITERIA, STARTER_PROFILE
 from jobapply.runner import Runner, questions, tracker
 from jobapply.settings import BOARDS, ChatGPTLogin, Settings
 
 logger = logging.getLogger('jobapply')
 MAX_EVENTS = 500
+# Pages opened by "Log in to sites": the accounts the loop needs
+LOGIN_PAGES = (
+	'https://accounts.google.com/ServiceLogin?continue=https://mail.google.com/mail/',
+	'https://www.linkedin.com/login',
+	'https://secure.indeed.com/auth',
+)
 
 
 def open_path(path: str | Path) -> None:
@@ -46,6 +52,7 @@ class Api:
 		self._seq = 0
 		self._lock = threading.Lock()
 		self._runner: Runner | None = None
+		self._login_browser: Any = None  # the profile opened for logins, while that window is open
 
 	# events
 
@@ -154,7 +161,30 @@ class Api:
 
 	# loop
 
+	def open_login_browser(self) -> dict:
+		"""The JobApply browser profile opened normally, without the remote debugging port the loop drives it through:
+		Google refuses to sign in a remote-controlled browser ("This browser or app may not be secure"). The logins are
+		saved in the profile, and the loop's browser uses them."""
+		if self._runner is not None and self._runner.browser is not None:
+			return {'error': 'Stop the loop first: the JobApply browser is in use. Then log in, close that window and Start.'}
+		if self._login_open():
+			return {'error': 'The login browser is already open.'}
+		from browser_use.browser.local import find_binary
+
+		try:
+			binary = find_binary(Settings.load().browser_executable or None)
+			args = [binary, f'--user-data-dir={sub("browser-profile")}', '--no-first-run', '--no-default-browser-check']
+			self._login_browser = subprocess.Popen([*args, *LOGIN_PAGES])
+			return {'ok': True}
+		except Exception as e:
+			return {'error': f'Could not open the browser: {e}'}
+
+	def _login_open(self) -> bool:
+		return self._login_browser is not None and self._login_browser.poll() is None
+
 	def start(self) -> dict:
+		if self._login_open():
+			return {'error': 'Close the login browser window first (it uses the same profile), then press Start.'}
 		try:
 			settings = Settings.load()
 			from jobapply.llm import agent_llm

@@ -21,8 +21,10 @@ need Chrome or Edge installed (Edge comes with Windows).
 2. **Setup → AI model**: a Gemini API key, an OpenAI API key, or **Sign in with ChatGPT** (see below).
 3. **Setup → Jobs**: which boards to search, how many jobs per day (default 20), and any job URLs you want handled
    first.
-4. **Run → Start**. A browser window opens with its own profile. The first time, log in to LinkedIn, Indeed and Gmail
-   in that window. The logins are kept for later runs.
+4. **Setup → Log in to sites**. This opens the JobApply browser normally. Sign in to Google (Gmail), LinkedIn and
+   Indeed, then close that window. The logins are kept. Log in here, not during a run: Google refuses to sign in to a
+   browser that is being remote-controlled ("This browser or app may not be secure").
+5. **Run → Start**. The browser window opens and the loop begins.
 
 ## What happens in the loop
 
