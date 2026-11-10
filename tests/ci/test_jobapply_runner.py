@@ -340,3 +340,84 @@ def test_an_empty_search_round_goes_one_page_deeper_instead_of_ending_the_loop(t
 	assert [s for s in searches if s[0] == 'indeed'] == [('indeed', n) for n in range(1, empty + 1)]
 	# linkedin: round 2 found the job, so its empty count restarted; then MAX_EMPTY_ROUNDS more empty rounds
 	assert [s for s in searches if s[0] == 'linkedin'] == [('linkedin', n) for n in range(1, empty + 3)]
+
+
+REFILL_CHECK = """
+x, y = js('(() => { const r = document.getElementById("submit").getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()')
+click_at_xy(x, y)
+import time; time.sleep(0.3)
+js('document.getElementById("salary").value = "70,000 EUR"')
+print('clicks', js('window.clicks'), 'url', js('location.href'))
+"""
+
+
+def test_answering_a_jobs_questions_goes_back_and_finishes_that_application(tmp_path, monkeypatch):
+	"""User report: of 14 jobs only one was complete; the rest waited on questions, and answering them changed nothing
+	in the open applications. Once every question of a job is answered, the loop goes back to that job's tab (locked
+	against Submit again), fills the rest, and updates the job's row instead of adding one."""
+	chrome = find_chrome() or pytest.skip('Chrome not installed')
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	job = tmp_path / 'job.html'
+	job.write_text(JOB, encoding='utf-8')
+	profile = tmp_path / 'profile.md'
+	profile.write_text(PROFILE, encoding='utf-8')
+	settings = Settings(
+		profile_path=str(profile),
+		criteria_path=str(profile),
+		gemini_api_key='k',
+		boards=[],
+		job_urls=[job.as_uri()],
+		browser_executable=chrome,
+	)
+	done = {'status': 'filled', 'company': 'Acme', 'title': 'Engineer', 'url': job.as_uri()}
+	model, seen = script(
+		('ask_user', {'question': 'What is your desired salary?', 'field': 'salary'}),
+		('finish', {'success': True, 'result': done}),
+		('python', {'code': REFILL_CHECK}),
+		('finish', {'success': True, 'result': {**done, 'notes': 'Salary filled from your answer.'}}),
+	)
+	monkeypatch.setattr(runner_mod, 'agent_llm', lambda s: model)
+	monkeypatch.setattr(runner_mod, 'writer_model', lambda llm: None)
+	r = runner_mod.Runner(settings, lambda e: None)
+	r.start()
+	try:
+		r._thread.join(120)
+		first = runner_mod.tracker().rows()
+		assert [(row.status, row.unanswered_questions) for row in first] == [('needs_input', 'What is your desired salary?')]
+		assert runner_mod.ready_jobs() == []  # the question is still open
+
+		question = runner_mod.questions().open()[0]
+		runner_mod.questions().answer(question.id, '70,000 EUR', profile)
+		assert runner_mod.ready_jobs() == [job.as_uri()]
+		r.request_refill(job.as_uri())
+		r.start(refill_only=True)
+		r._thread.join(120)
+
+		task = str(seen[2][0])
+		assert 'Continue the application' in task and '70,000 EUR' in task  # the answer is in the profile it reads
+		assert f'clicks 0 url {job.as_uri()}' in str(seen[3][-1])  # same tab, Submit held again
+		rows = runner_mod.tracker().rows()
+		assert len(rows) == 1 and (rows[0].status, rows[0].unanswered_questions) == ('filled', '')
+		assert rows[0].tab_id == first[0].tab_id and rows[0].notes == 'Salary filled from your answer.'
+		assert runner_mod.ready_jobs() == []
+		with CDP(r._ws()) as cdp:  # handed back to the user
+			session = cdp.send('Target.attachToTarget', targetId=rows[0].tab_id, flatten=True)['sessionId']
+			ev = lambda e: cdp.send('Runtime.evaluate', session, expression=e, returnByValue=True)['result'].get('value')  # noqa: E731
+			assert ev('document.getElementById("salary").value') == '70,000 EUR'
+			box = ev('(r => [r.x + r.width / 2, r.y + r.height / 2])(document.getElementById("submit").getBoundingClientRect())')
+			for kind in ('mousePressed', 'mouseReleased'):
+				cdp.send('Input.dispatchMouseEvent', session, type=kind, x=box[0], y=box[1], button='left', clickCount=1)
+			assert ev('window.clicks') == 1
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())
+
+
+def test_marking_a_job_submitted_keeps_it_out_of_the_loop(tmp_path, monkeypatch):
+	"""Done in History: the job counts as submitted and is never searched up or applied to again."""
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	t = runner_mod.tracker()
+	t.add(runner_mod.Row(url='https://jobs.lever.co/acme/1', status='needs_input', unanswered_questions='Salary?'))
+	t.update('https://jobs.lever.co/acme/1?lever-source=x', status='submitted')
+	assert [r.status for r in t.rows()] == ['submitted']
+	assert t.seen('https://jobs.lever.co/acme/1') and runner_mod.ready_jobs() == []

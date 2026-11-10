@@ -36,8 +36,12 @@ need Chrome or Edge installed (Edge comes with Windows).
   PDF together with a cover letter, in `documents\<date>_<company>_<title>\`. A resume naming an employer, school or
   number that isn't in your profile is sent back to the model to fix.
 - **Unknown questions** (salary, visa, custom questions): the field is left empty, the question goes to the
-  **Questions** tab, and the loop continues. When you answer, the answer is saved under `## Saved answers` in your
-  profile, so later applications use it.
+  **Questions** tab, and the loop continues. Your answer is saved under `## Saved answers` in your profile, so later
+  applications use it. Once every question of a job is answered (or closed with **Done** or **Skip**), JobApply goes
+  back to that job's tab, locks Submit again, fills the missing fields and hands the tab back to you. The job's row
+  is updated in place. **Fill again** in **History** does the same at any time.
+- **Tracker:** in **History**, **Submitted ✓** marks a job as done. It's never applied to again, and its questions
+  close.
 - **Email applications**: when a posting asks you to email your CV, it opens a Gmail compose tab, writes the email,
   attaches the resume and cover letter PDFs, and leaves the draft unsent.
 - **Daily cap**: filled, email-drafted and needs-input jobs count toward it. Skipped and failed jobs do not.

@@ -64,6 +64,19 @@ submit.
 Finish with the JobOutcome: company, title, the posting URL, the board (linkedin, indeed, greenhouse, lever, ashby,
 wellfound, workday, company site, email), status, unanswered questions, and short notes for the user."""
 
+REFILL_TASK = """Continue the application at {url} in the current tab. It was filled earlier, and fields were left
+empty for questions the user has now answered; their answers are in the candidate profile (Saved answers). The
+questions were: {questions}
+
+1. Look at the page as it is now. If it still shows the application, fill every empty field the profile now answers
+   (those questions first, then any other empty required field), and keep what is already filled unless it is wrong.
+   If a resume or cover letter upload is empty, call prepare_documents (it returns the files already made for this
+   job). If the page lost the form (expired, logged out, back on the posting), open the application again and fill it
+   from the start. If it asks to log in and the user said they logged in, continue; otherwise ask_user again.
+2. Stop before the final submit, exactly as before.
+3. Status "filled" when every required field is filled; "needs_input" (with ask_user for each) when something is
+   still missing. Notes: what you filled now."""
+
 SEARCH_TASK = """Find up to {count} job postings on {board} that match the job criteria and are not yet in the user's list.
 
 Start at {start_url} (already open in the current tab) and search with the criteria's titles and locations, newest

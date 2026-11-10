@@ -34,7 +34,36 @@ STATE = {
 	'current': {},
 	'today': 1,
 	'cap': 20,
-	'rows': [],
+	'rows': [
+		{
+			'date': 'd',
+			'time': 't',
+			'company': 'Kodifly',
+			'title': 'Graduate',
+			'url': 'https://jobs.ashbyhq.com/k/1',
+			'board': 'ashby',
+			'status': 'needs_input',
+			'tab_id': 'T1',
+			'resume': '',
+			'cover_letter': '',
+			'unanswered_questions': 'Why us?',
+			'notes': '',
+		},
+		{
+			'date': 'd',
+			'time': 't',
+			'company': 'Duna',
+			'title': 'Backend',
+			'url': 'https://jobs.ashbyhq.com/d/2',
+			'board': 'ashby',
+			'status': 'skipped',
+			'tab_id': '',
+			'resume': '',
+			'cover_letter': '',
+			'unanswered_questions': '',
+			'notes': '5+ years',
+		},
+	],
 	'home': 'h',
 	'questions': [
 		{
@@ -123,6 +152,22 @@ def test_a_login_request_is_done_with_one_click_not_an_answer(chrome):
 		assert ['dismiss', 'q2'] in ev('window.__calls')
 		assert not any(c[0] == 'answer' for c in ev('window.__calls'))
 		assert ev('!!document.querySelector("[data-done=q2]")') is False
+	finally:
+		cdp.send('Target.closeTarget', targetId=target)
+		cdp.close()
+
+
+def test_history_marks_a_job_submitted_and_sends_it_back_to_be_filled(chrome):
+	"""User request: a Done button so a job is not applied to again, and a way to have an application filled again."""
+	cdp, session, target, ev = _page(chrome)
+	try:
+		ev('document.querySelector("nav button[data-tab=history]").click()')
+		assert ev('document.querySelectorAll("[data-submitted]").length') == 1  # not on a skipped job
+		ev('document.querySelector("[data-refill]").click()')
+		ev('document.querySelector("[data-submitted]").click()')
+		time.sleep(0.3)
+		calls = ev('window.__calls')
+		assert ['refill', 'https://jobs.ashbyhq.com/k/1'] in calls and ['mark_submitted', 'https://jobs.ashbyhq.com/k/1'] in calls
 	finally:
 		cdp.send('Target.closeTarget', targetId=target)
 		cdp.close()

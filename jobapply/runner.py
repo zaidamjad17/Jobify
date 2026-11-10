@@ -15,6 +15,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from jobapply import audit, documents
@@ -24,9 +25,9 @@ from jobapply.llm import agent_llm, writer_model
 from jobapply.paths import app_home, sub
 from jobapply.profile import Question, Questions, read_text, tone_from_criteria
 from jobapply.profile import _norm as norm_question
-from jobapply.prompts import APPLY_TASK, BOARD_HINTS, RULES, SEARCH_TASK, FoundJobs, JobOutcome
+from jobapply.prompts import APPLY_TASK, BOARD_HINTS, REFILL_TASK, RULES, SEARCH_TASK, FoundJobs, JobOutcome
 from jobapply.settings import BOARDS, Settings
-from jobapply.tracker import Row, Tracker
+from jobapply.tracker import Row, Tracker, job_key
 
 logger = logging.getLogger('jobapply')
 APPLY_MAX_STEPS, APPLY_TIMEOUT_S = 90, 1500
@@ -50,6 +51,22 @@ def questions() -> Questions:
 	return Questions(app_home() / 'questions.json')
 
 
+def ready_jobs() -> list[str]:
+	"""Jobs waiting on questions that are now all answered or closed: the loop can go back and finish them."""
+	still_open = {norm_question(q.question) for q in questions().open()}
+	latest: dict[str, Row] = {}
+	for row in tracker().rows():
+		if row.url:
+			latest[job_key(row.url)] = row
+	return [
+		row.url
+		for row in latest.values()
+		if row.status == 'needs_input'
+		and row.unanswered_questions
+		and not any(norm_question(q) in still_open for q in row.unanswered_questions.split(' | '))
+	]
+
+
 def build_rules(profile: str, criteria: str) -> str:
 	return RULES.replace('{profile}', profile).replace('{criteria}', criteria)  # the files may hold braces
 
@@ -69,18 +86,33 @@ class Runner:
 		self.browser: Any = None
 		self.guard: SubmitGuard | None = None
 		self.current: dict[str, str] = {}
+		self._refills: deque[str] = deque()  # jobs to finish with the user's answers, before any new job
+		self._refills_lock = threading.Lock()
+		self._refill_only = False
 
 	# control (any thread)
 
-	def start(self) -> None:
+	def start(self, refill_only: bool = False) -> None:
+		"""refill_only: only finish the jobs in request_refill(), then stop (no new jobs)."""
 		if self._thread and self._thread.is_alive():
 			if self.state == 'paused':
 				self.resume()
 			return
+		self._refill_only = refill_only
 		self._stop = False
 		self._resume.set()
 		self._thread = threading.Thread(target=self._main, daemon=True, name='jobapply-runner')
 		self._thread.start()
+
+	def request_refill(self, url: str) -> None:
+		"""Go back to this job's application and fill what the user's answers now cover (next, before new jobs)."""
+		with self._refills_lock:
+			if all(job_key(u) != job_key(url) for u in self._refills):
+				self._refills.append(url)
+
+	def _next_refill(self) -> str | None:
+		with self._refills_lock:
+			return self._refills.popleft() if self._refills else None
 
 	def pause(self) -> None:
 		"""Finishes the current job, then waits."""
@@ -142,7 +174,7 @@ class Runner:
 		read_text(s.criteria_path, 'job criteria')
 		await self._start_browser()
 		self._set_state('running' if self._resume.is_set() else 'paused')
-		queue: deque[dict] = deque({'url': u, 'board': ''} for u in s.job_urls)
+		queue: deque[dict] = deque() if self._refill_only else deque({'url': u, 'board': ''} for u in s.job_urls)
 		boards = [b for b in s.boards if b in BOARDS]
 		rounds = dict.fromkeys(boards, 0)  # result pages searched per board
 		empty = dict.fromkeys(boards, 0)  # rounds in a row without a new job
@@ -150,6 +182,11 @@ class Runner:
 		while not self._stop:
 			await self._paused()
 			if self._stop:
+				break
+			if refill := self._next_refill():  # answered jobs first, also past the daily cap
+				await self._refill(refill, llm, writer)
+				continue
+			if self._refill_only:
 				break
 			if self.tracker.count_today() >= s.daily_cap:
 				self._log(f'Daily limit reached ({s.daily_cap} jobs). Review your open tabs; the count resets at midnight.')
@@ -174,7 +211,11 @@ class Runner:
 			if self.tracker.seen(job['url']):
 				continue
 			await self._apply(job, llm, writer)
-		self._log('Loop finished. Your filled tabs stay open in the JobApply browser for review.')
+		self._log(
+			'Done finishing your answered applications.'
+			if self._refill_only
+			else 'Loop finished. Your filled tabs stay open in the JobApply browser for review.'
+		)
 
 	async def _paused(self) -> None:
 		await asyncio.to_thread(self._resume.wait)  # a threading.Event: pause()/resume() come from the UI thread
@@ -215,6 +256,17 @@ class Runner:
 		_daemon_request(name, {'meta': 'set_session', 'session_id': session, 'target_id': target})
 		self.browser._agent_tab = target
 		return target
+
+	def _attach_tab(self, target: str) -> None:
+		"""The agent's REPL on an open tab (a job it goes back to), brought to the front."""
+		from browser_use.browser.browser import _daemon_cdp, _daemon_request
+
+		name = self.browser.name
+		session = _daemon_cdp(name, 'Target.attachToTarget', targetId=target, flatten=True)['sessionId']
+		_daemon_request(name, {'meta': 'set_session', 'session_id': session, 'target_id': target})
+		with contextlib.suppress(Exception):
+			_daemon_cdp(name, 'Target.activateTarget', targetId=target)
+		self.browser._agent_tab = target
 
 	def _close_tabs(self, targets: list[str]) -> None:
 		from browser_use.browser.browser import _daemon_cdp
@@ -286,16 +338,11 @@ class Runner:
 		self._log(f'{label}: {len(jobs)} new job(s) found.' if jobs else f'{label}: nothing new.')
 		return jobs
 
-	async def _apply(self, job: dict, llm: Any, writer: Any) -> None:
+	def _job_tools(self, url: str, docs: dict[str, str], asked: list[str], writer: Any) -> Any:
+		"""prepare_documents and ask_user for one job; docs and asked collect what they did."""
 		from browser_use import Tools
 
 		s = self.settings
-		url = job['url']
-		self.current = {'phase': 'apply', 'url': url, 'company': job.get('company', ''), 'title': job.get('title', '')}
-		self._emit('current', **self.current)
-		self._log(f'Applying: {job.get("title") or url} {("at " + job["company"]) if job.get("company") else ""}'.strip())
-		docs: dict[str, str] = {}
-		asked: list[str] = []
 		tools = Tools()
 
 		@tools.action(
@@ -338,6 +385,16 @@ class Runner:
 			self._emit('question', id=q.id, question=q.question)
 			return 'Sent to the user. Leave this field empty and continue with the rest of the form.'
 
+		return tools
+
+	async def _apply(self, job: dict, llm: Any, writer: Any) -> None:
+		url = job['url']
+		self.current = {'phase': 'apply', 'url': url, 'company': job.get('company', ''), 'title': job.get('title', '')}
+		self._emit('current', **self.current)
+		self._log(f'Applying: {job.get("title") or url} {("at " + job["company"]) if job.get("company") else ""}'.strip())
+		docs: dict[str, str] = {}
+		asked: list[str] = []
+		tools = self._job_tools(url, docs, asked, writer)
 		await self._start_browser()
 		mark = self.guard.mark() if self.guard else 0
 		tab = await asyncio.to_thread(self._open_tab, url)
@@ -359,10 +416,63 @@ class Runner:
 		self._finish(job, tab, mark, outcome, docs, asked, error)
 		self._log(f'Done in {time.monotonic() - started:.0f}s.')
 
+	async def _refill(self, url: str, llm: Any, writer: Any) -> None:
+		"""Go back to a job that waited on questions: fill what the answers (now in the profile) cover, in its tab."""
+		row = self.tracker.latest(url)
+		if row is None or row.status not in ('needs_input', 'failed', 'filled', 'email_drafted'):
+			return
+		job = {'url': url, 'company': row.company, 'title': row.title, 'board': row.board}
+		self.current = {'phase': 'apply', 'url': url, 'company': row.company, 'title': row.title}
+		self._emit('current', **self.current)
+		self._log(f'Finishing with your answers: {row.title or url}{" at " + row.company if row.company else ""}')
+		docs: dict[str, str] = {}
+		if row.resume and Path(row.resume).exists():  # the documents made for this job, not new ones
+			docs = {'resume_pdf': row.resume, 'cover_letter_pdf': row.cover_letter, 'folder': str(Path(row.resume).parent)}
+			letter = Path(row.resume).parent / 'cover_letter.txt'
+			if letter.exists():
+				docs['cover_letter_text'] = letter.read_text(encoding='utf-8').strip()
+		asked: list[str] = []
+		tools = self._job_tools(url, docs, asked, writer)
+		await self._start_browser()
+		mark = self.guard.mark() if self.guard else 0
+		tab = row.tab_id
+		if tab and self.guard and tab in self.guard.pages:  # its tab is still open: lock it again and continue there
+			self.guard.lock([tab])
+			await asyncio.to_thread(self._attach_tab, tab)
+			task = REFILL_TASK.replace('{url}', url).replace('{questions}', row.unanswered_questions or '(none listed)')
+		else:  # the tab was closed: start the application again
+			tab = await asyncio.to_thread(self._open_tab, url)
+			task = APPLY_TASK.replace('{url}', url)
+		outcome: JobOutcome | None = None
+		error = ''
+		try:
+			result = await self._run_agent(task, JobOutcome, tools, APPLY_MAX_STEPS, APPLY_TIMEOUT_S)
+			outcome = result.structured_output
+			if outcome is None:
+				error = result.error or f'the agent stopped ({result.status}) before it finished'
+		except asyncio.CancelledError:
+			self._finish(job, tab, mark, None, docs, asked, 'stopped by you', update=True)
+			raise
+		except Exception as e:
+			logger.exception('refill failed')
+			error = str(e)
+		self._finish(job, tab, mark, outcome, docs, asked, error, update=True)
+
 	def _finish(
-		self, job: dict, tab: str, mark: int, outcome: JobOutcome | None, docs: dict, asked: list[str], error: str
+		self,
+		job: dict,
+		tab: str,
+		mark: int,
+		outcome: JobOutcome | None,
+		docs: dict,
+		asked: list[str],
+		error: str,
+		update: bool = False,
 	) -> None:
+		"""Audit the filled tabs, hand them to the user, and log the job (update: change its existing row)."""
 		tabs = self.guard.tabs_since(mark) if self.guard else [tab]
+		if update and tab not in tabs:
+			tabs.insert(0, tab)
 		status = outcome.status if outcome else 'failed'
 		if status in ('filled', 'email_drafted', 'needs_input', 'failed') and self.browser is not None:
 			try:  # answers the profile does not give (salary, start date, visa...) are emptied and asked
@@ -383,32 +493,39 @@ class Runner:
 					)
 			except Exception as e:
 				logger.warning('answer audit failed: %s', e)
+		if not asked and outcome and outcome.status == 'needs_input':
+			# the agent reported questions without sending them: send them, so they can be answered
+			for text in outcome.unanswered_questions:
+				q = self.questions.ask(Question(question=text, company=job.get('company', ''), url=job['url']))
+				asked.append(q.question)
+				self._emit('question', id=q.id, question=q.question)
 		if status == 'filled' and asked:  # a field was left empty for the user
+			status = 'needs_input'
+		if update and status == 'failed':  # a job that was filled before stays the user's to finish
 			status = 'needs_input'
 		if status == 'skipped':
 			self._close_tabs(tabs)
 			tabs = []
 		elif self.guard:  # the user reviews and submits in these tabs
 			self.guard.release(tabs)
-		all_questions: list[str] = [*(outcome.unanswered_questions if outcome else []), *asked]
 		unique: dict[str, str] = {}
-		for q in all_questions:  # one entry per question, however it was punctuated
+		for q in asked:  # the questions in Questions, once each however they were punctuated
 			unique.setdefault(norm_question(q), q)
-		questions = list(unique.values())
-		row = self.tracker.add(
-			Row(
-				company=(outcome.company if outcome else '') or job.get('company', ''),
-				title=(outcome.title if outcome else '') or job.get('title', ''),
-				url=job['url'],
-				board=(outcome.board if outcome else '') or job.get('board', ''),
-				status=status,
-				tab_id=tab if tabs else '',
-				resume=docs.get('resume_pdf', ''),
-				cover_letter=docs.get('cover_letter_pdf', ''),
-				unanswered_questions=' | '.join(questions),
-				notes=(outcome.notes if outcome else '') or error,
-			)
-		)
+		values = {
+			'company': (outcome.company if outcome else '') or job.get('company', ''),
+			'title': (outcome.title if outcome else '') or job.get('title', ''),
+			'board': (outcome.board if outcome else '') or job.get('board', ''),
+			'status': status,
+			'tab_id': tab if tabs else '',
+			'resume': docs.get('resume_pdf', ''),
+			'cover_letter': docs.get('cover_letter_pdf', ''),
+			'unanswered_questions': ' | '.join(unique.values()),
+			'notes': (outcome.notes if outcome else '') or error,
+		}
+		if update:
+			row = self.tracker.update(job['url'], **values)
+		else:
+			row = self.tracker.add(Row(url=job['url'], **values))
 		self.current = {}
 		self._emit('job', row=row.__dict__, today=self.tracker.count_today(), cap=self.settings.daily_cap)
 

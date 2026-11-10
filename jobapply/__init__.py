@@ -3,4 +3,4 @@
 The user reviews each filled tab and submits it themselves. See jobapply/README.md.
 """
 
-__version__ = '0.2.1'
+__version__ = '0.2.2'
