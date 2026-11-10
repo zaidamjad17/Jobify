@@ -278,16 +278,35 @@ $('stop').onclick = () => call('stop');
 $('opencsv').onclick = () => call('open_csv');
 $('openhome').onclick = () => call('open_path', '');
 
+let shownQuestions = null;
 function renderQuestions(qs) {
 	$('qbadge').hidden = !qs.length; $('qbadge').textContent = qs.length;
-	$('qlist').innerHTML = qs.length ? qs.map(q => `
-		<div class="q"><div><b>${esc(q.question)}</b></div>
-		<div class="meta">${esc([q.company, q.title].filter(Boolean).join(' - '))}${q.jobs > 1 ? ` (asked by ${q.jobs} jobs)` : ''} ${esc(q.asked_at)}</div>
-		<div class="row"><input type="text" id="a_${q.id}" placeholder="Your answer" style="flex:1"><button class="btn" data-answer="${q.id}">Save answer</button></div></div>`).join('')
-		: '<div class="empty">No open questions.</div>';
+	// Rebuilt only when the questions change: the page refreshes every second while the loop runs, and rebuilding
+	// replaced the input being typed into
+	const key = JSON.stringify(qs.map(q => [q.id, q.jobs]));
+	if (key === shownQuestions) return;
+	shownQuestions = key;
+	const typed = {};
+	document.querySelectorAll('#qlist input[id^="a_"]').forEach(i => typed[i.id] = i.value);
+	const focused = document.activeElement && document.activeElement.id;
+	$('qlist').innerHTML = qs.length ? qs.map(q => {
+		const login = q.field_hint === 'login';
+		const meta = `${esc([q.company, q.title].filter(Boolean).join(' - '))}${q.jobs > 1 ? ` (asked by ${q.jobs} jobs)` : ''} ${esc(q.asked_at)}`;
+		const act = login
+			? `<span class="hint" style="flex:1">Log in in that job's tab in the JobApply browser, then click Done.</span><button class="btn" data-done="${q.id}">Done</button>`
+			: `<input type="text" id="a_${q.id}" placeholder="Your answer" style="flex:1"><button class="btn" data-answer="${q.id}">Save answer</button><button class="btn ghost" data-done="${q.id}" title="Remove without saving an answer">Skip</button>`;
+		return `<div class="q"><div><b>${esc(q.question)}</b></div><div class="meta">${meta}</div><div class="row">${act}</div></div>`;
+	}).join('') : '<div class="empty">No open questions.</div>';
+	for (const [id, value] of Object.entries(typed)) if ($(id)) $(id).value = value;
+	if (focused && $(focused)) $(focused).focus();
 	document.querySelectorAll('[data-answer]').forEach(b => b.onclick = async () => {
-		await call('answer', b.dataset.answer, $('a_' + b.dataset.answer).value); toast('Saved to your profile.'); refresh(true);
+		await call('answer', b.dataset.answer, $('a_' + b.dataset.answer).value); toast('Saved to your profile.'); refresh(false);
 	});
+	document.querySelectorAll('[data-answer]').forEach(b => {
+		const input = $('a_' + b.dataset.answer);
+		if (input) input.onkeydown = e => { if (e.key === 'Enter') b.click(); };
+	});
+	document.querySelectorAll('[data-done]').forEach(b => b.onclick = async () => { await call('dismiss', b.dataset.done); refresh(false); });
 }
 
 function renderRows(rows) {

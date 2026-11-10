@@ -177,3 +177,13 @@ class Questions:
 			q.answer = answer.strip()
 			self._write(questions)
 			return q
+
+	def dismiss(self, question_id: str) -> None:
+		"""Close the question without writing anything to the profile."""
+		with self._lock:
+			questions = self.all()
+			q = next((q for q in questions if q.id == question_id), None)
+			if q is None:
+				raise ValueError('That question is gone.')
+			q.answer = '(dismissed)'
+			self._write(questions)

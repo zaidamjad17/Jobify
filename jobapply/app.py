@@ -232,6 +232,14 @@ class Api:
 		except (ValueError, OSError) as e:
 			return {'error': str(e)}
 
+	def dismiss(self, question_id: str) -> dict:
+		"""Close a question without an answer (a login done in the browser, or one the user will not answer)."""
+		try:
+			questions().dismiss(question_id)
+			return {'ok': True}
+		except (ValueError, OSError) as e:
+			return {'error': str(e)}
+
 	# ChatGPT
 
 	def chatgpt_login(self) -> dict:
