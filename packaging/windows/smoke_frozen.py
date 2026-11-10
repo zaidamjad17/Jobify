@@ -14,7 +14,13 @@ from pydantic_ai.models.function import FunctionModel
 from browser_use import Agent, Browser
 
 TURNS = [
-	('python', {'code': "new_tab('data:text/html,<h1>frozen ok</h1>'); print(js('document.querySelector(\"h1\").textContent'))"}),
+	# wait_for_load: on a Windows runner the first read came before the page existed (querySelector -> null)
+	(
+		'python',
+		{
+			'code': "new_tab('data:text/html,%3Ch1%3Efrozen%20ok%3C%2Fh1%3E'); wait_for_load(); print(js('document.body.innerText'))"
+		},
+	),
 	('finish', {'success': True, 'result': 'done'}),
 ]
 
