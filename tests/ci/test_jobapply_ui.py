@@ -79,9 +79,11 @@ def _page(chrome):
 	cdp.send('Page.enable', session)
 	cdp.send('Page.addScriptToEvaluateOnNewDocument', session, source=STUB % json.dumps(STATE))
 	cdp.send('Page.navigate', session, url=resource('ui/index.html').resolve().as_uri())
-	ev = lambda e: cdp.send('Runtime.evaluate', session, expression=e, returnByValue=True, awaitPromise=True)['result'].get(
-		'value'
-	)  # noqa: E731
+
+	def ev(expression):
+		reply = cdp.send('Runtime.evaluate', session, expression=expression, returnByValue=True, awaitPromise=True)
+		return reply['result'].get('value')
+
 	for _ in range(100):
 		try:
 			if ev('!!document.getElementById("a_q1")'):
