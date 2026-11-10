@@ -1,32 +1,33 @@
-"""Sign in with ChatGPT: OAuth 2.0 authorization code + PKCE with a localhost redirect, as native apps do.
+"""Sign in with ChatGPT: the user's ChatGPT plan pays for the model, with no API key.
 
-login() opens the sign-in page in the user's default browser and waits for the redirect on
-http://localhost:<port>/auth/callback; tokens are kept in chatgpt_auth.json in the app folder and refreshed before they
-expire. The endpoints, scope and client id are settings (ChatGPTLogin): the client id is the one OpenAI issues for this
-app when it is registered for Sign in with ChatGPT."""
+OpenAI lets open-source and locally run apps use a signed-in user's ChatGPT plan for Responses API requests
+(developers.openai.com/siwc/token-sharing-open-source). Pydantic AI implements the flow
+(`pydantic_ai.providers.openai_chatgpt`), and this module wires it into the app:
+
+- No client id to set up: the first sign-in registers JobApply for the user's ChatGPT account (dynamic registration,
+  identified by this installation's host id), and OpenAI returns the client id to reuse on later sign-ins.
+- The browser opens OpenAI's sign-in page; the code comes back to http://127.0.0.1:1455/auth/callback (OpenAI fixes
+  the scheme, host and path; only the port may vary) and is exchanged with PKCE.
+- The credentials (client id, tokens, ID token, granted scopes) are kept in chatgpt_auth.json in the app folder; the
+  provider refreshes the access token and saves the new set."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
-import hashlib
-import http.server
 import json
-import secrets
-import threading
-import time
-import urllib.parse
+import uuid
 import webbrowser
+from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-import httpx
-
 from jobapply.paths import app_home
-from jobapply.settings import ChatGPTLogin
 
-CALLBACK_PATH = '/auth/callback'
+APP_NAME = 'JobApply'
+REDIRECT_PORT = 1455
 LOGIN_TIMEOUT_S = 300
-REFRESH_MARGIN_S = 120
 
 
 class AuthError(RuntimeError):
@@ -37,161 +38,115 @@ def token_file() -> Path:
 	return app_home() / 'chatgpt_auth.json'
 
 
-def pkce_pair() -> tuple[str, str]:
-	verifier = secrets.token_urlsafe(64)[:96]
-	challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b'=').decode()
-	return verifier, challenge
-
-
-def redirect_uri(cfg: ChatGPTLogin) -> str:
-	return f'http://localhost:{cfg.redirect_port}{CALLBACK_PATH}'
-
-
-def authorize_url(cfg: ChatGPTLogin, challenge: str, state: str) -> str:
-	query = {
-		'response_type': 'code',
-		'client_id': cfg.client_id,
-		'redirect_uri': redirect_uri(cfg),
-		'scope': cfg.scope,
-		'code_challenge': challenge,
-		'code_challenge_method': 'S256',
-		'state': state,
-	}
-	return f'{cfg.authorize_url}?{urllib.parse.urlencode(query)}'
-
-
-def _jwt_claims(token: str) -> dict:
+def host_id() -> str:
+	"""A stable, opaque id for this installation (created once): OpenAI ties the registration to it."""
+	path = app_home() / 'chatgpt_host_id'
 	try:
-		payload = token.split('.')[1]
-		return json.loads(base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4)))
-	except (IndexError, ValueError):
-		return {}
+		value = path.read_text(encoding='utf-8').strip()
+		if value.startswith('urn:uuid:'):
+			return value
+	except OSError:
+		pass
+	value = uuid.uuid4().urn
+	path.write_text(value, encoding='utf-8')
+	return value
 
 
-def _store(data: dict) -> dict:
-	tokens = {
-		'access_token': data['access_token'],
-		'refresh_token': data.get('refresh_token', ''),
-		'id_token': data.get('id_token', ''),
-		'expires_at': time.time() + float(data.get('expires_in') or 3600),
-	}
-	old = load_tokens()
-	if not tokens['refresh_token'] and old:  # a refresh that returns no new refresh token keeps the old one
-		tokens['refresh_token'] = old.get('refresh_token', '')
-	path = token_file()
-	tmp = path.with_suffix('.tmp')
-	tmp.write_text(json.dumps(tokens), encoding='utf-8')
-	tmp.replace(path)
-	return tokens
+def load_credentials() -> Any:
+	"""The saved OpenAIChatGPTCredentials, or None."""
+	from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTCredentials
 
-
-def load_tokens() -> dict | None:
 	try:
-		return json.loads(token_file().read_text(encoding='utf-8'))
-	except (OSError, ValueError):
+		data = json.loads(token_file().read_text(encoding='utf-8'))
+		return OpenAIChatGPTCredentials(**data)
+	except (OSError, ValueError, TypeError):
 		return None
 
 
-def logout() -> None:
-	token_file().unlink(missing_ok=True)
+def save_credentials(credentials: Any) -> None:
+	path = token_file()
+	tmp = path.with_suffix('.tmp')
+	tmp.write_text(json.dumps(asdict(credentials)), encoding='utf-8')
+	tmp.replace(path)
+
+
+class CredentialFile:
+	"""OpenAIChatGPTCredentialSource on chatgpt_auth.json: the provider saves refreshed tokens here."""
+
+	async def load(self) -> Any:
+		credentials = load_credentials()
+		if credentials is None:
+			raise AuthError('Not signed in with ChatGPT: sign in from Setup.')
+		return credentials
+
+	async def save(self, credentials: Any) -> None:
+		save_credentials(credentials)
 
 
 def status() -> dict[str, Any]:
-	tokens = load_tokens()
-	if not tokens:
+	credentials = load_credentials()
+	if credentials is None:
 		return {'signed_in': False}
-	claims = _jwt_claims(tokens.get('id_token', ''))
-	return {'signed_in': True, 'email': claims.get('email', ''), 'expires_at': tokens.get('expires_at', 0)}
+	return {'signed_in': True, 'email': _email(credentials.id_token), 'plan_usage': credentials.plan_usage_granted}
 
 
-def _exchange(cfg: ChatGPTLogin, form: dict) -> dict:
-	response = httpx.post(cfg.token_url, data={**form, 'client_id': cfg.client_id}, timeout=30)
-	if response.status_code != 200:
-		raise AuthError(f'ChatGPT sign-in failed ({response.status_code}): {response.text[:300]}')
-	return response.json()
-
-
-def login(cfg: ChatGPTLogin, open_browser=webbrowser.open) -> dict[str, Any]:
-	"""Blocks until the user finishes signing in (or LOGIN_TIMEOUT_S)."""
-	if not cfg.client_id:
-		raise AuthError('Set the ChatGPT client id in Setup (from your app registration on the OpenAI developer platform).')
-	verifier, challenge = pkce_pair()
-	state = secrets.token_urlsafe(24)
-	result: dict[str, str] = {}
-	done = threading.Event()
-
-	class Callback(http.server.BaseHTTPRequestHandler):
-		def do_GET(self) -> None:
-			url = urllib.parse.urlsplit(self.path)
-			if url.path != CALLBACK_PATH:
-				self.send_error(404)
-				return
-			params = dict(urllib.parse.parse_qsl(url.query))
-			ok = params.get('state') == state and 'code' in params
-			result.update(params if ok else {'error': params.get('error_description') or params.get('error') or 'bad state'})
-			body = (
-				'<h2>Signed in. You can close this tab and go back to JobApply.</h2>'
-				if ok
-				else '<h2>Sign-in failed. Go back to JobApply and try again.</h2>'
-			)
-			self.send_response(200)
-			self.send_header('Content-Type', 'text/html; charset=utf-8')
-			self.end_headers()
-			self.wfile.write(body.encode())
-			done.set()
-
-		def log_message(self, *args: Any) -> None:
-			pass
-
+def _email(id_token: str | None) -> str:
+	"""The account's email from the ID token (for display only; the token was checked when it was issued)."""
 	try:
-		server = http.server.HTTPServer(('127.0.0.1', cfg.redirect_port), Callback)
-	except OSError as e:
-		raise AuthError(f'Port {cfg.redirect_port} is busy ({e}); close the app using it or change the port in Setup.') from None
-	thread = threading.Thread(target=server.serve_forever, daemon=True)
-	thread.start()
-	try:
-		open_browser(authorize_url(cfg, challenge, state))
-		if not done.wait(LOGIN_TIMEOUT_S):
-			raise AuthError('ChatGPT sign-in timed out.')
-	finally:
-		server.shutdown()
-		server.server_close()
-	if 'error' in result:
-		raise AuthError(f'ChatGPT sign-in failed: {result["error"]}')
-	data = _exchange(
-		cfg,
-		{
-			'grant_type': 'authorization_code',
-			'code': result['code'],
-			'redirect_uri': redirect_uri(cfg),
-			'code_verifier': verifier,
-		},
+		payload = (id_token or '').split('.')[1]
+		return str(json.loads(base64.urlsafe_b64decode(payload + '=' * (-len(payload) % 4))).get('email', ''))
+	except (IndexError, ValueError, AttributeError):
+		return ''
+
+
+def logout() -> None:
+	"""Forget the tokens. The host id stays, so signing in again reuses this installation's registration."""
+	token_file().unlink(missing_ok=True)
+
+
+async def login_async(open_browser: Callable[[str], Any] = webbrowser.open, ask_consent: bool = False) -> dict[str, Any]:
+	from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTOAuthFlow
+
+	previous = load_credentials()
+	flow = OpenAIChatGPTOAuthFlow(
+		app_name=APP_NAME,
+		host_id=host_id(),
+		client_id=previous.client_id if previous else None,  # reuse the registration
+		redirect_uri=f'http://127.0.0.1:{REDIRECT_PORT}/auth/callback',
 	)
-	_store(data)
+	# A user who declined plan usage before is asked again (prompt=consent)
+	ask = ask_consent or bool(previous and not previous.plan_usage_granted)
+	open_browser(flow.authorization_url(extra_params={'prompt': 'consent'} if ask else None))
+	try:
+		credentials = await asyncio.wait_for(flow.exchange_code_from_callback(), LOGIN_TIMEOUT_S)
+	except TimeoutError:
+		raise AuthError('ChatGPT sign-in timed out. Try again.') from None
+	except OSError as e:  # the callback port is taken
+		raise AuthError(f'Port {REDIRECT_PORT} is busy ({e}); close the app using it (e.g. Codex CLI) and try again.') from None
+	except Exception as e:  # denied, or the token exchange failed
+		raise AuthError(f'ChatGPT sign-in failed: {e}') from None
+	save_credentials(credentials)  # saved even without plan usage: the next sign-in reuses the registration
+	if not credentials.plan_usage_granted:
+		raise AuthError(
+			'Signed in, but "Use your ChatGPT plan" was not allowed. Sign in again and approve it: '
+			'JobApply needs it to run the AI on your plan.'
+		)
 	return status()
 
 
-_refresh_lock = threading.Lock()
+def login(open_browser: Callable[[str], Any] = webbrowser.open) -> dict[str, Any]:
+	"""Blocks until the user finishes signing in in their browser (or LOGIN_TIMEOUT_S)."""
+	return asyncio.run(login_async(open_browser))
 
 
-def access_token(cfg: ChatGPTLogin) -> str:
-	with _refresh_lock:
-		tokens = load_tokens()
-		if not tokens:
-			raise AuthError('Not signed in with ChatGPT: sign in from Setup.')
-		if tokens.get('expires_at', 0) - time.time() > REFRESH_MARGIN_S:
-			return tokens['access_token']
-		if not tokens.get('refresh_token'):
-			raise AuthError('The ChatGPT sign-in expired: sign in again from Setup.')
-		return _store(_exchange(cfg, {'grant_type': 'refresh_token', 'refresh_token': tokens['refresh_token']}))['access_token']
+def model(model_name: str) -> Any:
+	"""The Pydantic AI model that runs on the signed-in user's ChatGPT plan."""
+	from pydantic_ai.models.openai import OpenAIResponsesModel
+	from pydantic_ai.providers.openai_chatgpt import OpenAIChatGPTProvider
 
-
-class TokenAuth(httpx.Auth):
-	"""Puts a fresh ChatGPT access token on every model request (refreshing it when it is about to expire)."""
-
-	def __init__(self, cfg: ChatGPTLogin):
-		self.cfg = cfg
-
-	def auth_flow(self, request: httpx.Request):
-		request.headers['Authorization'] = f'Bearer {access_token(self.cfg)}'
-		yield request
+	credentials = load_credentials()
+	if credentials is None:
+		raise AuthError('Sign in with ChatGPT in Setup first.')
+	if not credentials.plan_usage_granted:
+		raise AuthError('Sign in with ChatGPT again and allow "Use your ChatGPT plan".')
+	return OpenAIResponsesModel(model_name, provider=OpenAIChatGPTProvider(credential_source=CredentialFile()))

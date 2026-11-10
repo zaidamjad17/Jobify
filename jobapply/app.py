@@ -21,7 +21,7 @@ from jobapply import __version__
 from jobapply.paths import app_home, resource, sub
 from jobapply.profile import STARTER_CRITERIA, STARTER_PROFILE
 from jobapply.runner import Runner, questions, tracker
-from jobapply.settings import BOARDS, ChatGPTLogin, Settings
+from jobapply.settings import BOARDS, Settings
 
 logger = logging.getLogger('jobapply')
 MAX_EVENTS = 500
@@ -53,6 +53,8 @@ class Api:
 		self._lock = threading.Lock()
 		self._runner: Runner | None = None
 		self._login_browser: Any = None  # the profile opened for logins, while that window is open
+		self._release: Any = None  # the newest release found by check_update()
+		self._updating = False
 
 	# events
 
@@ -95,7 +97,6 @@ class Api:
 					data.pop(key, None)
 			if isinstance(data.get('chatgpt'), dict):
 				data['chatgpt'] = {**current['chatgpt'], **data['chatgpt']}
-				data['chatgpt']['redirect_port'] = int(data['chatgpt'].get('redirect_port') or ChatGPTLogin.redirect_port)
 			if 'daily_cap' in data:
 				data['daily_cap'] = int(data['daily_cap'])
 			if isinstance(data.get('job_urls'), str):
@@ -237,7 +238,7 @@ class Api:
 		from jobapply import chatgpt_auth
 
 		try:
-			return chatgpt_auth.login(Settings.load().chatgpt)
+			return chatgpt_auth.login()
 		except Exception as e:
 			return {'error': str(e)}
 
@@ -246,6 +247,61 @@ class Api:
 
 		chatgpt_auth.logout()
 		return {'ok': True}
+
+	# updates
+
+	def check_update(self) -> dict:
+		from jobapply import updater
+
+		try:
+			self._release = updater.check()
+		except updater.UpdateError as e:
+			return {'error': str(e), 'current': __version__}
+		return {'current': __version__, 'release': updater.as_dict(self._release)}
+
+	def install_update(self) -> dict:
+		"""Download the newest release's installer, then close the app and let the installer replace it."""
+		from jobapply import updater
+
+		if self._updating:
+			return {'error': 'The update is already downloading.'}
+		if self._release is None:
+			found = self.check_update()
+			if 'error' in found or self._release is None:
+				return found if 'error' in found else {'error': 'You already have the newest version.'}
+		if self._runner is not None and self._runner.state not in ('idle',):
+			return {'error': 'Stop the loop first (your open tabs stay open until the app closes), then update.'}
+		release, self._updating = self._release, True
+
+		def run() -> None:
+			try:
+				path = updater.download(
+					release,
+					progress=lambda done, total: self._event(
+						{'kind': 'update', 'stage': 'download', 'done': done, 'total': total}
+					),
+				)
+				self._event({'kind': 'update', 'stage': 'installing', 'version': release.version})
+				self.shutdown()
+				updater.install(path)
+				if self._window is not None:
+					self._window.destroy()  # the installer starts the new version
+			except Exception as e:
+				logger.exception('update failed')
+				self._event({'kind': 'update', 'stage': 'error', 'text': str(e)})
+			finally:
+				self._updating = False
+
+		threading.Thread(target=run, daemon=True, name='jobapply-update').start()
+		return {'ok': True, 'version': release.version}
+
+	def _check_update_in_background(self) -> None:
+		def run() -> None:
+			found = self.check_update()
+			if found.get('release'):
+				self._event({'kind': 'update', 'stage': 'available', 'version': found['release']['version']})
+
+		threading.Thread(target=run, daemon=True, name='jobapply-update-check').start()
 
 	def shutdown(self) -> None:
 		runner = self._runner
@@ -294,7 +350,7 @@ def main() -> None:
 	api._window = window
 	assert window is not None
 	window.events.closed += api.shutdown
-	webview.start()
+	webview.start(api._check_update_in_background)  # runs once the window is up
 
 
 if __name__ == '__main__':

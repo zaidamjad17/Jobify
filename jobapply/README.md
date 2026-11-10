@@ -83,12 +83,19 @@ point.
 
 ## Sign in with ChatGPT
 
-This is OAuth 2.0 with PKCE and a localhost redirect (`http://localhost:1455/auth/callback` by default). Model calls
-go to an OpenAI-compatible Responses endpoint, with your token refreshed automatically.
+Your ChatGPT plan (Plus or Pro) pays for the AI, with no API key. Choose **Sign in with ChatGPT** in **Setup → AI
+model**, click **Sign in**, and approve **Use your ChatGPT plan** in the browser that opens.
 
-- **Client ID**: enter the one OpenAI issues when you register the app for Sign in with ChatGPT.
-- **Endpoints, scope, API base URL and port**: these are settings, so they can follow OpenAI's current documentation
-  without a new build.
+There's nothing to set up. JobApply uses OpenAI's
+[ChatGPT plan usage for open-source and local apps](https://developers.openai.com/siwc/token-sharing-open-source),
+through Pydantic AI's `OpenAIChatGPTProvider`:
+
+- **Registration:** the first sign-in registers JobApply for your ChatGPT account automatically (`dynamic_agent_client`,
+  with an ID unique to this installation). OpenAI returns a client ID, which later sign-ins reuse.
+- **Login:** the browser comes back to `http://127.0.0.1:1455/auth/callback`. Close the Codex CLI first if it's
+  running, because it uses the same port.
+- **Tokens:** saved in `chatgpt_auth.json` and refreshed automatically. **Sign out** deletes them.
+- **AI calls:** these go to the OpenAI Responses API and count against your plan's limits.
 
 ## Develop
 
@@ -99,8 +106,22 @@ uv run pytest tests/ci/test_jobapply*.py   # unit + end-to-end on headless Chrom
 ```
 
 To build the installer, run `.github/workflows/jobapply-windows.yml`, which uses PyInstaller
-(`packaging/windows/jobapply.spec`) and then Inno Setup (`packaging/windows/installer.iss`). Push a `jobapply-v0.1.0`
-tag to attach the installer to a release.
+(`packaging/windows/jobapply.spec`) and then Inno Setup (`packaging/windows/installer.iss`).
+
+## Updates
+
+**Setup → Updates** shows the installed version. The app checks for a new one when it starts and shows an **Update**
+button in the header. Installing it:
+
+1. downloads the installer and checks its SHA-256 against the release;
+2. closes JobApply and its browser;
+3. installs the new version silently and opens it.
+
+Your settings, profile, logins and history in `%APPDATA%\JobApply` are kept.
+
+**To publish an update:** raise `__version__` in `jobapply/__init__.py` and merge to `main`. The `jobapply-windows`
+workflow then builds the installer and publishes the GitHub release `jobapply-v<version>`, which every installed copy
+offers. The first copy with the updater (0.2.0) has to be installed by hand once.
 
 ## Limits
 

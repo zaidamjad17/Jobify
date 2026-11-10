@@ -181,57 +181,85 @@ def test_frozen_dispatch_runs_module_and_code(monkeypatch, tmp_path, capsys):
 	assert capsys.readouterr().out.split('\n')[:2] == ['hi __main__', "mod ['x'] __main__"]
 
 
-def test_chatgpt_login_pkce_flow(monkeypatch):
-	"""login() opens the authorize URL, takes the localhost redirect, checks state and swaps the code with the
-	verifier; access_token() refreshes an expiring token."""
-	posted = []
-
-	class Response:
-		status_code = 200
-
-		def __init__(self, data):
-			self._data, self.text = data, json.dumps(data)
-
-		def json(self):
-			return self._data
-
-	def fake_post(url, data, timeout):
-		posted.append(data)
-		token = 'h.' + __import__('base64').urlsafe_b64encode(b'{"email":"ada@example.com"}').decode().rstrip('=') + '.s'
-		n = len(posted)
-		return Response({'access_token': f'at{n}', 'refresh_token': f'rt{n}', 'id_token': token, 'expires_in': 60})
-
-	monkeypatch.setattr(chatgpt_auth.httpx, 'post', fake_post)
-	cfg = ChatGPTLogin(client_id='app_123', redirect_port=0)
-	with pytest.raises(chatgpt_auth.AuthError, match='client id'):
-		chatgpt_auth.login(ChatGPTLogin())
-
+async def test_chatgpt_sign_in_registers_itself_and_runs_on_the_plan(monkeypatch):
+	"""Sign in with ChatGPT for local apps needs no client id: the first sign-in registers the app (dynamic_agent_client,
+	this installation's host id, the app name) and the callback returns the issued client id, which later sign-ins
+	reuse. Plan usage (chatgpt.tokens.use.direct) is required; a sign-in without it asks for consent next time."""
+	import base64
 	import socket
+	import time
 
-	with socket.socket() as s:
-		s.bind(('127.0.0.1', 0))
-		cfg.redirect_port = s.getsockname()[1]
+	from pydantic_ai.providers import openai_chatgpt
 
-	def browser(url):
+	with socket.socket() as sock:
+		sock.bind(('127.0.0.1', 0))
+		monkeypatch.setattr(chatgpt_auth, 'REDIRECT_PORT', sock.getsockname()[1])
+	granted = ['openid email offline_access resource.invoke chatgpt.tokens.use.direct']
+	urls, posted = [], []
+
+	def jwt(claims):
+		part = lambda d: base64.urlsafe_b64encode(json.dumps(d).encode()).decode().rstrip('=')  # noqa: E731
+		return f'{part({"alg": "none"})}.{part(claims)}.sig'
+
+	async def token_endpoint(url, form, ta, **kw):
+		posted.append(form)
+		nonce = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(urls[-1]).query))['nonce']
+		claims = {
+			'iss': 'https://auth.openai.com',
+			'aud': form['client_id'],
+			'sub': 'user-1',
+			'nonce': nonce,
+			'exp': int(time.time()) + 3600,
+			'email': 'ada@example.com',
+		}
+		return openai_chatgpt._TokenResponse(access_token='at', refresh_token='rt', id_token=jwt(claims), scope=granted[0])
+
+	monkeypatch.setattr(openai_chatgpt, '_post_token_request', token_endpoint)
+
+	def browser(url):  # the user approves; OpenAI redirects to the loopback callback with the issued client id
+		urls.append(url)
 		q = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query))
-		assert (
-			q['client_id'] == 'app_123'
-			and q['code_challenge_method'] == 'S256'
-			and q['redirect_uri'].startswith('http://localhost:')
-		)
-		back = f'http://127.0.0.1:{cfg.redirect_port}/auth/callback?code=c0de&state={q["state"]}'
-		threading.Thread(target=lambda: urllib.request.urlopen(back).read(), daemon=True).start()
+		back = f'http://127.0.0.1:{chatgpt_auth.REDIRECT_PORT}/auth/callback?code=c0de&state={q["state"]}&client_id=app_issued'
 
-	status = chatgpt_auth.login(cfg, open_browser=browser)
-	assert status == {'signed_in': True, 'email': 'ada@example.com', 'expires_at': pytest.approx(status['expires_at'])}
-	assert posted[0]['grant_type'] == 'authorization_code' and posted[0]['code'] == 'c0de' and posted[0]['code_verifier']
-	# expires in 60 s, inside the refresh margin: refreshed with the refresh token
-	assert chatgpt_auth.access_token(cfg) == 'at2'
-	assert posted[1] == {'grant_type': 'refresh_token', 'refresh_token': 'rt1', 'client_id': 'app_123'}
+		def hit():
+			for _ in range(50):
+				try:
+					urllib.request.urlopen(back, timeout=2).read()
+					return
+				except OSError:
+					time.sleep(0.05)
+
+		threading.Thread(target=hit, daemon=True).start()
+
+	status = await chatgpt_auth.login_async(open_browser=browser)
+	assert status == {'signed_in': True, 'email': 'ada@example.com', 'plan_usage': True}
+	first = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(urls[0]).query))
+	assert urls[0].startswith('https://auth.openai.com/api/accounts/authorize?')
+	assert first['client_id'] == 'dynamic_agent_client' and first['agent_name_hint'] == 'JobApply'
+	assert first['ext_agent_host_id'].startswith('urn:uuid:') and first['code_challenge_method'] == 'S256'
+	assert 'chatgpt.tokens.use.direct' in first['scope'].split()
+	assert first['redirect_uri'] == f'http://127.0.0.1:{chatgpt_auth.REDIRECT_PORT}/auth/callback'
+	assert posted[0]['client_id'] == 'app_issued' and posted[0]['code'] == 'c0de'
+
+	model = chatgpt_auth.model('gpt-6-luna')  # requests go to api.openai.com with the plan's token, no API key
+	assert model.system == 'openai-chatgpt' and model.model_name == 'gpt-6-luna'
+
+	granted[0] = 'openid email offline_access'  # signing in again: the registration is reused; plan use declined
+	with pytest.raises(chatgpt_auth.AuthError, match='Use your ChatGPT plan'):
+		await chatgpt_auth.login_async(open_browser=browser)
+	again = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(urls[1]).query))
+	assert again['client_id'] == 'app_issued' and 'agent_name_hint' not in again
+	assert again['ext_agent_host_id'] == first['ext_agent_host_id']
+	with pytest.raises(chatgpt_auth.AuthError, match='Use your ChatGPT plan'):
+		chatgpt_auth.model('gpt-6-luna')
+	granted[0] = 'openid email offline_access chatgpt.tokens.use.direct'
+	await chatgpt_auth.login_async(open_browser=browser)
+	assert dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(urls[2]).query))['prompt'] == 'consent'
+
 	chatgpt_auth.logout()
 	assert chatgpt_auth.status() == {'signed_in': False}
-	with pytest.raises(chatgpt_auth.AuthError, match='Not signed in'):
-		chatgpt_auth.access_token(cfg)
+	with pytest.raises(chatgpt_auth.AuthError, match='Sign in'):
+		chatgpt_auth.model('gpt-6-luna')
 
 
 def test_profile_topics_count_only_lines_with_a_value():
@@ -304,3 +332,70 @@ def test_login_browser_opens_the_profile_without_remote_control(home, monkeypatc
 	assert 'close the login browser' in api.start()['error'].lower()
 	Proc.alive = False
 	assert 'close the login browser' not in str(api.start().get('error', '')).lower()
+
+
+def _github(releases: list[dict], files: dict[str, bytes]):
+	import httpx
+
+	def handler(request: httpx.Request) -> httpx.Response:
+		if request.url.path == '/repos/zaidamjad17/Jobify/releases':
+			return httpx.Response(200, json=releases)
+		if request.url.path in files:
+			return httpx.Response(200, content=files[request.url.path])
+		return httpx.Response(404)
+
+	return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def _release(tag: str, data: bytes = b'', **extra) -> dict:
+	import hashlib
+
+	asset = {
+		'name': f'JobApply-Setup-{tag.removeprefix("jobapply-v")}.exe',
+		'browser_download_url': f'https://github.com/dl/{tag}.exe',
+		'size': len(data),
+		'digest': 'sha256:' + hashlib.sha256(data).hexdigest(),
+	}
+	return {'tag_name': tag, 'body': f'notes {tag}', 'html_url': f'https://github.com/r/{tag}', 'assets': [asset], **extra}
+
+
+def test_update_check_offers_the_newest_installer_above_the_running_version():
+	from jobapply import updater
+
+	releases = [
+		_release('jobapply-v0.1.0'),
+		_release('jobapply-v0.3.0', draft=True),
+		_release('jobapply-v0.2.5', prerelease=True),
+		_release('jobapply-v0.2.0'),
+		_release('jobapply-v0.10.0', assets=[]),  # the build has not attached the installer yet
+		_release('1.0.1'),  # a browser-use release, not the app's
+		_release('jobapply-v0.2.0-beta'),
+	]
+	found = updater.check('0.1.0', client=_github(releases, {}))
+	assert found is not None and (found.version, found.name) == ('0.2.0', 'JobApply-Setup-0.2.0.exe')
+	assert updater.check('0.2.0', client=_github(releases, {})) is None
+	assert (
+		updater.check('0.1.0', client=_github([_release('jobapply-v0.9.0'), _release('jobapply-v0.10.0')], {})).version
+		== '0.10.0'
+	)
+
+
+def test_update_download_checks_the_installer_and_install_starts_it_silently(home):
+	from jobapply import updater
+
+	data = b'MZ installer bytes'
+	good = updater.check('0.1.0', client=_github([_release('jobapply-v0.2.0', data)], {}))
+	assert good is not None
+	seen = []
+	path = updater.download(
+		good, progress=lambda done, total: seen.append((done, total)), client=_github([], {'/dl/jobapply-v0.2.0.exe': data})
+	)
+	assert path.read_bytes() == data and path.parent == home / 'updates' and seen[-1] == (len(data), len(data))
+
+	with pytest.raises(updater.UpdateError, match='does not match'):  # a tampered or truncated download installs nothing
+		updater.download(good, client=_github([], {'/dl/jobapply-v0.2.0.exe': b'MZ evil bytes!!!!!'}))
+	assert not list((home / 'updates').glob('*.part'))
+
+	started = []
+	updater.install(path, popen=lambda args, **kw: started.append(args))
+	assert started == [[str(path), '/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS']]

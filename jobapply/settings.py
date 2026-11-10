@@ -25,15 +25,8 @@ BOARDS = {  # id -> (label, search URL hint for the agent)
 
 @dataclass
 class ChatGPTLogin:
-	"""Sign in with ChatGPT (OAuth 2.0 + PKCE, localhost redirect). The client id comes from the OpenAI developer
-	platform, where the app is registered; the endpoints are settings so they follow OpenAI's docs without a new build."""
+	"""Sign in with ChatGPT needs no client id or endpoints: the first sign-in registers the app (chatgpt_auth.py)."""
 
-	client_id: str = ''
-	authorize_url: str = 'https://auth.openai.com/oauth/authorize'
-	token_url: str = 'https://auth.openai.com/oauth/token'
-	scope: str = 'openid profile email offline_access'
-	api_base: str = 'https://api.openai.com/v1'
-	redirect_port: int = 1455
 	model: str = 'gpt-6-luna'
 
 

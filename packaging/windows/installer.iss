@@ -2,7 +2,7 @@
 ; Start menu entry and a desktop shortcut. Build after PyInstaller:  iscc packaging\windows\installer.iss
 #define AppVersion GetEnv("JOBAPPLY_VERSION")
 #if AppVersion == ""
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.2.0"
 #endif
 
 [Setup]
@@ -20,6 +20,7 @@ SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayIcon={app}\JobApply.exe
 CloseApplications=yes
+RestartApplications=no
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"
@@ -33,4 +34,4 @@ Name: "{group}\Uninstall JobApply"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\JobApply"; Filename: "{app}\JobApply.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\JobApply.exe"; Description: "Start JobApply"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\JobApply.exe"; Description: "Start JobApply"; Flags: nowait postinstall

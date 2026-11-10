@@ -74,6 +74,7 @@
 		<button data-tab="setup">Setup</button>
 	</nav>
 	<div class="spacer"></div>
+	<button class="btn" id="updatebadge" hidden>Update</button>
 	<div class="count">Today <b id="today">0</b> / <span id="cap">20</span></div>
 	<span id="state" class="state">idle</span>
 </header>
@@ -150,12 +151,7 @@
 					<label>ChatGPT account</label>
 					<div class="row"><span id="chatgpt_status">not signed in</span><button class="btn" id="chatgpt_login">Sign in with ChatGPT</button><button class="btn ghost" id="chatgpt_logout">Sign out</button></div>
 					<label>Model</label><input type="text" id="cg_model">
-					<label>Client ID</label><input type="text" id="cg_client_id" placeholder="from your app registration on the OpenAI developer platform">
-					<label>Authorize URL</label><input type="text" id="cg_authorize_url">
-					<label>Token URL</label><input type="text" id="cg_token_url">
-					<label>Scope</label><input type="text" id="cg_scope">
-					<label>API base URL</label><input type="text" id="cg_api_base">
-					<label>Redirect port</label><input type="number" id="cg_redirect_port">
+					<label></label><div class="hint">Uses your ChatGPT plan (Plus or Pro) instead of an API key. Click Sign in, approve "Use your ChatGPT plan" in the browser, and come back. No Client ID or setup needed.</div>
 				</div>
 			</div>
 		</div>
@@ -168,6 +164,12 @@
 				<label>Browser (optional)</label>
 				<div class="row"><span class="path" id="browser_executable">Chrome or Edge (automatic)</span><button class="btn ghost" data-pick="browser">Choose</button><button class="btn ghost" id="autobrowser">Automatic</button></div>
 			</div>
+		</div>
+		<div class="card">
+			<h2>Updates</h2>
+			<div class="row"><span id="version">JobApply</span><button class="btn ghost" id="checkupdate">Check for updates</button>
+				<button class="btn" id="installupdate" hidden>Install update</button><span class="hint" id="updatestatus"></span></div>
+			<div class="hint">The app checks when it starts. Installing closes JobApply (and its browser), updates it, and opens the new version. Your settings, profile and history are kept.</div>
 		</div>
 		<div class="row"><button class="btn" id="save">Save settings</button><span class="hint" id="home"></span></div>
 	</section>
@@ -208,17 +210,17 @@ function fillSetup(st) {
 	for (const k of ['cover_letter_tone', 'gemini_model', 'openai_model', 'daily_cap', 'provider']) $(k).value = s[k];
 	$('gemini_api_key').placeholder = s.gemini_api_key ? 'saved (leave empty to keep)' : 'not set';
 	$('openai_api_key').placeholder = s.openai_api_key ? 'saved (leave empty to keep)' : 'not set';
-	for (const k of ['model', 'client_id', 'authorize_url', 'token_url', 'scope', 'api_base', 'redirect_port']) $('cg_' + k).value = s.chatgpt[k];
+	$('cg_model').value = s.chatgpt.model;
 	$('job_urls').value = (s.job_urls || []).join('\n');
 	$('boards').innerHTML = Object.entries(st.boards).map(([id, label]) =>
 		`<label><input type="checkbox" value="${id}" ${s.boards.includes(id) ? 'checked' : ''}> ${esc(label)}</label>`).join('');
 	$('home').textContent = 'Data folder: ' + st.home;
+	$('version').textContent = 'JobApply ' + st.version;
 	showProvider();
 }
 
 function setupData() {
-	const cg = {};
-	for (const k of ['model', 'client_id', 'authorize_url', 'token_url', 'scope', 'api_base', 'redirect_port']) cg[k] = $('cg_' + k).value.trim();
+	const cg = {model: $('cg_model').value.trim()};
 	return {
 		cover_letter_tone: $('cover_letter_tone').value.trim(), provider: $('provider').value,
 		gemini_model: $('gemini_model').value.trim(), gemini_api_key: $('gemini_api_key').value.trim(),
@@ -245,6 +247,25 @@ $('chatgpt_login').onclick = async () => {
 	const r = await call('chatgpt_login'); toast('Signed in' + (r.email ? ' as ' + r.email : '') + '.'); refresh(true);
 };
 $('loginbrowser').onclick = async () => { await call('open_login_browser'); toast('Sign in, then close that browser window and press Start.', 8000); };
+function showUpdate(version) {
+	$('updatebadge').hidden = $('installupdate').hidden = false;
+	$('updatebadge').textContent = 'Update to ' + version;
+	$('installupdate').textContent = 'Install version ' + version;
+	$('updatestatus').textContent = 'Version ' + version + ' is available.';
+}
+$('checkupdate').onclick = async () => {
+	$('updatestatus').textContent = 'Checking...';
+	const r = await call('check_update').catch(() => null);
+	if (!r) return ($('updatestatus').textContent = '');
+	if (r.release) showUpdate(r.release.version); else $('updatestatus').textContent = 'You have the newest version.';
+};
+async function installUpdate() {
+	if (!confirm('Install the update now? JobApply and its browser close, then the new version opens.')) return;
+	await call('install_update');
+	$('updatestatus').textContent = 'Downloading...';
+}
+$('installupdate').onclick = installUpdate;
+$('updatebadge').onclick = installUpdate;
 $('chatgpt_logout').onclick = async () => { await call('chatgpt_logout'); refresh(true); };
 
 $('start').onclick = async () => {
@@ -294,7 +315,8 @@ function renderState(st) {
 	const c = st.current || {};
 	$('current').textContent = c.phase === 'apply' ? `Applying: ${[c.title, c.company].filter(Boolean).join(' at ') || c.url}`
 		: c.phase === 'search' ? `Searching ${c.board}...` : '';
-	$('chatgpt_status').textContent = st.chatgpt.signed_in ? 'Signed in' + (st.chatgpt.email ? ' as ' + st.chatgpt.email : '') : 'Not signed in';
+	$('chatgpt_status').textContent = !st.chatgpt.signed_in ? 'Not signed in'
+		: 'Signed in' + (st.chatgpt.email ? ' as ' + st.chatgpt.email : '') + (st.chatgpt.plan_usage ? '' : ' (plan use not allowed: sign in again)');
 }
 
 async function refresh(full) {
@@ -319,6 +341,12 @@ async function poll() {
 				if (e.kind === 'log') { text = e.text; cls = e.level; }
 				else if (e.kind === 'blocked') { text = `Guard held "${e.text}" for your review.`; cls = 'blocked'; }
 				else if (e.kind === 'question') text = `Question for you: ${e.question}`;
+				else if (e.kind === 'update') {
+					if (e.stage === 'available') { showUpdate(e.version); text = `Version ${e.version} is available: Setup > Updates.`; }
+					else if (e.stage === 'download') $('updatestatus').textContent = e.total ? `Downloading ${Math.round(100 * e.done / e.total)}%` : 'Downloading...';
+					else if (e.stage === 'installing') { $('updatestatus').textContent = 'Installing; JobApply will reopen.'; text = `Installing version ${e.version}...`; }
+					else if (e.stage === 'error') { $('updatestatus').textContent = e.text; text = 'Update failed: ' + e.text; cls = 'error'; }
+				}
 				else if (e.kind === 'job') text = `${e.row.status.replace('_', ' ')}: ${[e.row.title, e.row.company].filter(Boolean).join(' at ')} (${e.today}/${e.cap} today)`;
 				if (text) { const d = document.createElement('div'); d.className = cls; d.innerHTML = `<time>${esc(e.time)}</time>${esc(text)}`; log.appendChild(d); }
 				changed = true;

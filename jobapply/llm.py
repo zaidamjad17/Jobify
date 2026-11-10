@@ -28,19 +28,12 @@ def agent_llm(settings: Settings) -> Any:
 
 
 def chatgpt_model(settings: Settings) -> Any:
-	import httpx
-	from pydantic_ai.models.openai import OpenAIResponsesModel
-	from pydantic_ai.providers.openai import OpenAIProvider
-
 	from jobapply import chatgpt_auth
 
-	cfg = settings.chatgpt
-	if not chatgpt_auth.status()['signed_in']:
-		raise ModelSetupError('Sign in with ChatGPT in Setup first.')
-	client = httpx.AsyncClient(auth=chatgpt_auth.TokenAuth(cfg), timeout=httpx.Timeout(600, connect=10))
-	# api_key is a placeholder the OpenAI client requires; TokenAuth replaces the header with the signed-in token
-	provider = OpenAIProvider(base_url=cfg.api_base, api_key='chatgpt-signed-in', http_client=client)
-	return OpenAIResponsesModel(cfg.model, provider=provider)
+	try:
+		return chatgpt_auth.model(settings.chatgpt.model)
+	except chatgpt_auth.AuthError as e:
+		raise ModelSetupError(str(e)) from None
 
 
 def writer_model(llm: Any) -> Any:

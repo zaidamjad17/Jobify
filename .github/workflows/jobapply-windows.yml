@@ -1,12 +1,19 @@
 name: jobapply-windows
-# Builds JobApply-Setup-<version>.exe (PyInstaller + Inno Setup). Every run uploads it as a workflow artifact; a
-# jobapply-v* tag also attaches it to a GitHub release of that tag.
+# Builds JobApply-Setup-<version>.exe (PyInstaller + Inno Setup). Every run uploads it as a workflow artifact.
+# On main, a new __version__ in jobapply/__init__.py publishes release jobapply-v<version> with the installer: the
+# app's updater (jobapply/updater.py) offers it to every installed copy. A jobapply-v* tag pushed by hand does too.
 permissions:
   contents: read
 
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
+    paths:
+      - 'jobapply/**'
+      - 'packaging/windows/**'
+      - '.github/workflows/jobapply-windows.yml'
     tags:
       - 'jobapply-v*'
   pull_request:
@@ -23,7 +30,7 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     permissions:
-      contents: write  # gh release upload on a jobapply-v* tag
+      contents: write  # publishes the release on main / a jobapply-v* tag
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
@@ -64,11 +71,19 @@ jobs:
         with:
           name: JobApply-Setup-${{ env.JOBAPPLY_VERSION }}
           path: dist/JobApply-Setup-*.exe
-      - name: Attach to the release
-        if: github.ref_type == 'tag'
+      - name: Publish the release (the app's updater offers it)
+        if: github.ref_type == 'tag' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view "${{ github.ref_name }}" >/dev/null 2>&1 || gh release create "${{ github.ref_name }}" --title "JobApply ${JOBAPPLY_VERSION}" --notes "Windows installer for JobApply."
-          gh release upload "${{ github.ref_name }}" dist/JobApply-Setup-*.exe --clobber
+          tag="jobapply-v${JOBAPPLY_VERSION}"
+          if [ "${{ github.ref_type }}" != "tag" ] && gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag exists: bump __version__ in jobapply/__init__.py to publish an update."
+            exit 0
+          fi
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$GITHUB_SHA" --title "JobApply ${JOBAPPLY_VERSION}" \
+              --notes "Windows installer for JobApply ${JOBAPPLY_VERSION}. Installed copies offer it under Setup > Updates."
+          fi
+          gh release upload "$tag" dist/JobApply-Setup-*.exe --clobber
