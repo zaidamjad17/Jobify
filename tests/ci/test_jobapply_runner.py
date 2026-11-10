@@ -301,3 +301,42 @@ def test_contact_details_typed_differently_from_the_profile_are_put_back(tmp_pat
 	finally:
 		r.stop()
 		asyncio.run(r.close_browser())
+
+
+def test_an_empty_search_round_goes_one_page_deeper_instead_of_ending_the_loop(tmp_path, monkeypatch):
+	"""User report: Start, one job, then the loop stopped by itself. Every board was searched on its first result page,
+	and one round without anything new ended the loop. A board is now searched one page deeper each round and is
+	dropped only after MAX_EMPTY_ROUNDS empty rounds in a row."""
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	(tmp_path / 'p.md').write_text(PROFILE, encoding='utf-8')
+	settings = Settings(
+		profile_path=str(tmp_path / 'p.md'),
+		criteria_path=str(tmp_path / 'p.md'),
+		gemini_api_key='k',
+		boards=['linkedin', 'indeed'],
+	)
+	monkeypatch.setattr(runner_mod, 'agent_llm', lambda s: None)
+	monkeypatch.setattr(runner_mod, 'writer_model', lambda llm: None)
+	searches, applied = [], []
+	r = runner_mod.Runner(settings, lambda e: None)
+
+	async def search(board, llm, round_):
+		searches.append((board, round_))
+		if (board, round_) == ('linkedin', 2):
+			return [{'url': 'https://www.linkedin.com/jobs/view/2/', 'board': board}]
+		return []
+
+	async def apply(job, llm, writer):
+		applied.append(job['url'])
+		r.tracker.add(runner_mod.Row(url=job['url'], status='filled'))
+
+	monkeypatch.setattr(r, '_start_browser', lambda: asyncio.sleep(0))
+	monkeypatch.setattr(r, '_search', search)
+	monkeypatch.setattr(r, '_apply', apply)
+	r.start()
+	r._thread.join(30)
+	assert applied == ['https://www.linkedin.com/jobs/view/2/']
+	empty = runner_mod.MAX_EMPTY_ROUNDS
+	assert [s for s in searches if s[0] == 'indeed'] == [('indeed', n) for n in range(1, empty + 1)]
+	# linkedin: round 2 found the job, so its empty count restarted; then MAX_EMPTY_ROUNDS more empty rounds
+	assert [s for s in searches if s[0] == 'linkedin'] == [('linkedin', n) for n in range(1, empty + 3)]

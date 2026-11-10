@@ -68,8 +68,13 @@ SEARCH_TASK = """Find up to {count} job postings on {board} that match the job c
 
 Start at {start_url} (already open in the current tab) and search with the criteria's titles and locations, newest
 first when the site offers it. {board_hint}
-For each candidate, call already_seen(url) and drop the ones it reports; only keep postings that are open and clearly
-match the criteria. Do not apply to anything and do not open application forms.
+This is search round {round}: earlier rounds already went through the results before page {round}, so go to results
+page {round} (use the site's page links or its start/offset parameter) and collect from there; continue to the next
+pages while you have fewer than {count}.
+For each candidate, call already_seen(url) and drop the ones it reports. Keep postings that are open and match the
+criteria reasonably: a similar title and a compatible location are enough; do not drop one over a detail the posting
+does not state (salary, exact years). Do not apply to anything and do not open application forms.
+If the site blocks you (a captcha you cannot pass, a login wall, "unusual traffic"), stop and say so in blocked.
 Finish with the list of jobs (url of the posting itself, company, title, board "{board_id}"). An empty list is fine
 when nothing new matches."""
 
@@ -102,3 +107,4 @@ class FoundJob(BaseModel):
 
 class FoundJobs(BaseModel):
 	jobs: list[FoundJob] = Field(default_factory=list)
+	blocked: str = Field('', description='empty, or what stopped the search: captcha, login wall, unusual traffic')

@@ -36,7 +36,9 @@ BUSY = re.compile(
 	r'ModelUnavailableError|ModelRateLimitError|ModelServerError|ModelConnectionError|\b(429|500|502|503|504)\b|overloaded|high demand|RESOURCE_EXHAUSTED|UNAVAILABLE'
 )
 SEARCH_MAX_STEPS, SEARCH_TIMEOUT_S = 40, 600
-SEARCH_BATCH = 5
+SEARCH_BATCH = 10
+MAX_EMPTY_ROUNDS = 3  # a board is dropped after this many rounds in a row without a new job
+MAX_ROUNDS = 10  # result pages per board in one run
 COUNTED_OUTCOMES = ('filled', 'email_drafted', 'needs_input')
 
 
@@ -142,7 +144,8 @@ class Runner:
 		self._set_state('running' if self._resume.is_set() else 'paused')
 		queue: deque[dict] = deque({'url': u, 'board': ''} for u in s.job_urls)
 		boards = [b for b in s.boards if b in BOARDS]
-		empty_boards: set[str] = set()
+		rounds = dict.fromkeys(boards, 0)  # result pages searched per board
+		empty = dict.fromkeys(boards, 0)  # rounds in a row without a new job
 		board_index = 0
 		while not self._stop:
 			await self._paused()
@@ -152,17 +155,19 @@ class Runner:
 				self._log(f'Daily limit reached ({s.daily_cap} jobs). Review your open tabs; the count resets at midnight.')
 				break
 			if not queue:
-				if not boards or empty_boards >= set(boards):
-					self._log('No new matching jobs found on the selected boards. Add job URLs or widen your criteria.')
+				live = [b for b in boards if empty[b] < MAX_EMPTY_ROUNDS and rounds[b] < MAX_ROUNDS]
+				if not live:
+					self._log(
+						'No more new jobs matching your criteria on the selected boards (each was searched several result '
+						'pages deep). Widen the criteria, select more boards, or paste job URLs in Setup, then Start again.'
+					)
 					break
-				board = boards[board_index % len(boards)]
+				board = live[board_index % len(live)]
 				board_index += 1
-				if board in empty_boards:
-					continue
-				found = await self._search(board, llm)
+				rounds[board] += 1
+				found = await self._search(board, llm, rounds[board])
 				fresh = [j for j in found if not self.tracker.seen(j['url'])]
-				if not fresh:
-					empty_boards.add(board)
+				empty[board] = 0 if fresh else empty[board] + 1
 				queue.extend(fresh)
 				continue
 			job = queue.popleft()
@@ -244,11 +249,11 @@ class Runner:
 			with contextlib.suppress(Exception):
 				await agent.close()
 
-	async def _search(self, board: str, llm: Any) -> list[dict]:
+	async def _search(self, board: str, llm: Any, round_: int = 1) -> list[dict]:
 		from browser_use import Tools
 
 		label, start_url = BOARDS[board]
-		self._log(f'Searching {label} for new jobs...')
+		self._log(f'Searching {label} for new jobs (results page {round_})...')
 		self.current = {'phase': 'search', 'board': label}
 		self._emit('current', **self.current)
 		tools = Tools()
@@ -266,13 +271,17 @@ class Runner:
 			.replace('{board_id}', board)
 			.replace('{start_url}', start_url)
 			.replace('{board_hint}', BOARD_HINTS.get(board, ''))
+			.replace('{round}', str(round_))
 		)
 		try:
 			result = await self._run_agent(task, FoundJobs, tools, SEARCH_MAX_STEPS, SEARCH_TIMEOUT_S)
 		finally:
 			if self.guard:  # search tabs are not for review
 				await asyncio.to_thread(self._close_tabs, self.guard.tabs_since(mark))
-		found = result.structured_output.jobs if result.structured_output else []
+		output = result.structured_output
+		found = output.jobs if output else []
+		if output and output.blocked:
+			self._log(f'{label}: {output.blocked}', 'error')
 		jobs = [{'url': j.url, 'board': j.board or board, 'company': j.company, 'title': j.title} for j in found if j.url]
 		self._log(f'{label}: {len(jobs)} new job(s) found.' if jobs else f'{label}: nothing new.')
 		return jobs
