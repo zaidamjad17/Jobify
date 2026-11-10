@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>JobApply</title>
+<style>
+	:root {
+		--bg: #f4f6f9; --panel: #ffffff; --ink: #18212b; --muted: #5d6b7a; --line: #dfe5ec;
+		--accent: #1f5f99; --accent-ink: #ffffff; --ok: #1d7a46; --warn: #a15c00; --bad: #b42318; --chip: #eef3f8;
+	}
+	@media (prefers-color-scheme: dark) {
+		:root { --bg: #11161c; --panel: #19212a; --ink: #e6edf3; --muted: #9aa8b6; --line: #2a3542;
+			--accent: #5aa1e0; --accent-ink: #0d1116; --ok: #4cc287; --warn: #e3a344; --bad: #f07167; --chip: #223040; }
+	}
+	* { box-sizing: border-box; }
+	body { margin: 0; font: 14px/1.45 "Segoe UI", system-ui, -apple-system, Arial, sans-serif; background: var(--bg); color: var(--ink); }
+	header { display: flex; align-items: center; gap: 18px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+	header h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+	nav { display: flex; gap: 4px; }
+	nav button { background: none; border: 0; color: var(--muted); padding: 7px 12px; border-radius: 6px; cursor: pointer; font: inherit; }
+	nav button.on { background: var(--chip); color: var(--ink); font-weight: 600; }
+	nav .badge { background: var(--bad); color: #fff; border-radius: 9px; padding: 0 6px; font-size: 11px; margin-left: 4px; }
+	.spacer { flex: 1; }
+	.count { font-variant-numeric: tabular-nums; color: var(--muted); }
+	.count b { color: var(--ink); font-size: 16px; }
+	main { padding: 18px 20px; max-width: 1180px; margin: 0 auto; }
+	section { display: none; }
+	section.on { display: block; }
+	.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
+	.card h2 { font-size: 15px; margin: 0 0 10px; }
+	.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+	.grid { display: grid; grid-template-columns: 180px 1fr; gap: 10px 14px; align-items: center; }
+	label { color: var(--muted); }
+	input[type=text], input[type=password], input[type=number], textarea, select {
+		width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; }
+	textarea { min-height: 70px; resize: vertical; }
+	button.btn { background: var(--accent); color: var(--accent-ink); border: 0; padding: 8px 16px; border-radius: 6px; cursor: pointer; font: inherit; font-weight: 600; }
+	button.btn.ghost { background: var(--chip); color: var(--ink); font-weight: 500; }
+	button.btn.danger { background: var(--bad); color: #fff; }
+	button.btn:disabled { opacity: .45; cursor: default; }
+	.path { font-family: Consolas, monospace; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 520px; }
+	.state { padding: 3px 10px; border-radius: 12px; background: var(--chip); font-weight: 600; text-transform: capitalize; }
+	.state.running { color: var(--ok); } .state.paused { color: var(--warn); } .state.stopping { color: var(--bad); }
+	.log { font-family: Consolas, monospace; font-size: 12.5px; max-height: 340px; overflow: auto; background: var(--bg); border-radius: 6px; padding: 8px 10px; }
+	.log div { padding: 1px 0; white-space: pre-wrap; }
+	.log .error { color: var(--bad); } .log .blocked { color: var(--warn); }
+	.log time { color: var(--muted); margin-right: 8px; }
+	table { width: 100%; border-collapse: collapse; font-size: 13px; }
+	th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+	th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
+	td a { color: var(--accent); cursor: pointer; text-decoration: none; }
+	.pill { padding: 1px 8px; border-radius: 10px; font-size: 12px; background: var(--chip); white-space: nowrap; }
+	.pill.filled, .pill.email_drafted { color: var(--ok); } .pill.needs_input { color: var(--warn); }
+	.pill.failed { color: var(--bad); } .pill.skipped { color: var(--muted); }
+	.q { border-top: 1px solid var(--line); padding: 12px 0; }
+	.q:first-child { border-top: 0; }
+	.q .meta { color: var(--muted); font-size: 12px; margin: 2px 0 8px; }
+	.boards { display: flex; flex-wrap: wrap; gap: 10px 18px; }
+	.hint { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+	.toast { position: fixed; bottom: 18px; right: 18px; background: var(--ink); color: var(--panel); padding: 10px 14px; border-radius: 8px; display: none; max-width: 460px; }
+	.empty { color: var(--muted); padding: 10px 0; }
+	.provider-fields { display: none; } .provider-fields.on { display: contents; }
+	.current { font-size: 15px; }
+</style>
+</head>
+<body>
+<header>
+	<h1>JobApply</h1>
+	<nav>
+		<button data-tab="run" class="on">Run</button>
+		<button data-tab="questions">Questions <span id="qbadge" class="badge" hidden></span></button>
+		<button data-tab="history">History</button>
+		<button data-tab="setup">Setup</button>
+	</nav>
+	<div class="spacer"></div>
+	<button class="btn" id="updatebadge" hidden>Update</button>
+	<div class="count">Today <b id="today">0</b> / <span id="cap">20</span></div>
+	<span id="state" class="state">idle</span>
+</header>
+<main>
+	<section id="run" class="on">
+		<div class="card">
+			<div class="row">
+				<button class="btn" id="start">Start</button>
+				<button class="btn ghost" id="pause" disabled>Pause</button>
+				<button class="btn danger" id="stop" disabled>Stop</button>
+				<div class="spacer"></div>
+				<span class="current" id="current"></span>
+			</div>
+			<div class="hint">It fills one job per tab and never presses Submit or Send. Filled tabs stay open in the JobApply browser; review each one and submit it yourself. Pause waits for the current job to finish; Stop cancels it.</div>
+		</div>
+		<div class="card">
+			<h2>Activity</h2>
+			<div class="log" id="log"><div class="empty">Nothing yet. Press Start.</div></div>
+		</div>
+	</section>
+
+	<section id="questions">
+		<div class="card">
+			<h2>Questions from applications</h2>
+			<div class="hint">The agent left these fields empty and kept going. Your answer is saved to your profile, so it is used for every later application. Fill the field in the open tab yourself for the jobs already done.</div>
+			<div id="qlist"></div>
+		</div>
+	</section>
+
+	<section id="history">
+		<div class="card">
+			<div class="row"><h2 style="margin:0">Applications</h2><div class="spacer"></div>
+				<button class="btn ghost" id="opencsv">Open CSV</button><button class="btn ghost" id="openhome">Open data folder</button></div>
+			<div style="max-height: 620px; overflow: auto; margin-top: 10px">
+				<table><thead><tr><th>When</th><th>Company / role</th><th>Status</th><th>Files</th><th>Notes</th></tr></thead><tbody id="rows"></tbody></table>
+			</div>
+		</div>
+	</section>
+
+	<section id="setup">
+		<div class="card">
+			<h2>Your files</h2>
+			<div class="grid">
+				<label>Profile (.md)</label>
+				<div class="row"><span class="path" id="profile_path">not set</span><button class="btn ghost" data-pick="profile">Choose</button><button class="btn ghost" data-starter="profile">New from template</button></div>
+				<label>Job criteria (.md)</label>
+				<div class="row"><span class="path" id="criteria_path">not set</span><button class="btn ghost" data-pick="criteria">Choose</button><button class="btn ghost" data-starter="criteria">New from template</button></div>
+				<label>Resume template</label>
+				<div class="row"><span class="path" id="resume_template_path">built-in</span><button class="btn ghost" data-pick="template">Choose</button><button class="btn ghost" data-starter="template">Copy built-in to edit</button><button class="btn ghost" id="builtin">Use built-in</button></div>
+				<label>Cover letter tone</label>
+				<input type="text" id="cover_letter_tone" placeholder="e.g. formal, friendly, short (150 words)">
+			</div>
+			<div class="hint">The profile holds everything about you (contact details, experience, education, skills, standard answers). The criteria say which jobs you want. A "Cover letter tone:" line in the criteria overrides the tone here. Templates use {{name}}, {{#experience}}...{{/experience}} and so on (see the built-in one).</div>
+		</div>
+		<div class="card">
+			<h2>Logins</h2>
+			<div class="row"><button class="btn" id="loginbrowser">Log in to sites</button>
+				<span class="hint">Opens the JobApply browser normally (Google, LinkedIn, Indeed). Sign in, close that window, then press Start. Google blocks sign-in while the browser is remote-controlled, so log in here, not during a run.</span></div>
+		</div>
+		<div class="card">
+			<h2>AI model</h2>
+			<div class="grid">
+				<label>Provider</label>
+				<select id="provider"><option value="gemini">Google Gemini (API key)</option><option value="openai">OpenAI (API key)</option><option value="chatgpt">Sign in with ChatGPT</option></select>
+				<div class="provider-fields" data-provider="gemini">
+					<label>Gemini model</label><input type="text" id="gemini_model">
+					<label>Gemini API key</label><input type="password" id="gemini_api_key" placeholder="saved: leave empty to keep">
+				</div>
+				<div class="provider-fields" data-provider="openai">
+					<label>OpenAI model</label><input type="text" id="openai_model">
+					<label>OpenAI API key</label><input type="password" id="openai_api_key" placeholder="saved: leave empty to keep">
+				</div>
+				<div class="provider-fields" data-provider="chatgpt">
+					<label>ChatGPT account</label>
+					<div class="row"><span id="chatgpt_status">not signed in</span><button class="btn" id="chatgpt_login">Sign in with ChatGPT</button><button class="btn ghost" id="chatgpt_logout">Sign out</button></div>
+					<label>Model</label><input type="text" id="cg_model">
+					<label></label><div class="hint">Uses your ChatGPT plan (Plus or Pro) instead of an API key. Click Sign in, approve "Use your ChatGPT plan" in the browser, and come back. No Client ID or setup needed.</div>
+				</div>
+			</div>
+		</div>
+		<div class="card">
+			<h2>Jobs</h2>
+			<div class="grid">
+				<label>Boards to search</label><div class="boards" id="boards"></div>
+				<label>Jobs per day</label><input type="number" id="daily_cap" min="1" max="200">
+				<label>Job URLs (one per line)</label><textarea id="job_urls" placeholder="Pasted links are applied to first, before any search."></textarea>
+				<label>Browser (optional)</label>
+				<div class="row"><span class="path" id="browser_executable">Chrome or Edge (automatic)</span><button class="btn ghost" data-pick="browser">Choose</button><button class="btn ghost" id="autobrowser">Automatic</button></div>
+			</div>
+		</div>
+		<div class="card">
+			<h2>Updates</h2>
+			<div class="row"><span id="version">JobApply</span><button class="btn ghost" id="checkupdate">Check for updates</button>
+				<button class="btn" id="installupdate" hidden>Install update</button><span class="hint" id="updatestatus"></span></div>
+			<div class="hint">The app checks when it starts. Installing closes JobApply (and its browser), updates it, and opens the new version. Your settings, profile and history are kept.</div>
+		</div>
+		<div class="row"><button class="btn" id="save">Save settings</button><span class="hint" id="home"></span></div>
+	</section>
+</main>
+<div class="toast" id="toast"></div>
+<script>
+const $ = id => document.getElementById(id);
+let api = null, since = 0, state = null;
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+
+function toast(text, ms = 3500) {
+	const t = $('toast'); t.textContent = text; t.style.display = 'block';
+	clearTimeout(toast.timer); toast.timer = setTimeout(() => t.style.display = 'none', ms);
+}
+async function call(name, ...args) {
+	const r = await api[name](...args);
+	if (r && r.error) { toast(r.error, 6000); throw new Error(r.error); }
+	return r;
+}
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+	document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
+	document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === b.dataset.tab));
+});
+
+function showProvider() {
+	const p = $('provider').value;
+	document.querySelectorAll('.provider-fields').forEach(el => el.classList.toggle('on', el.dataset.provider === p));
+}
+$('provider').onchange = showProvider;
+
+function fillSetup(st) {
+	const s = st.settings;
+	$('profile_path').textContent = s.profile_path || 'not set';
+	$('criteria_path').textContent = s.criteria_path || 'not set';
+	$('resume_template_path').textContent = s.resume_template_path || 'built-in';
+	$('browser_executable').textContent = s.browser_executable || 'Chrome or Edge (automatic)';
+	for (const k of ['cover_letter_tone', 'gemini_model', 'openai_model', 'daily_cap', 'provider']) $(k).value = s[k];
+	$('gemini_api_key').placeholder = s.gemini_api_key ? 'saved (leave empty to keep)' : 'not set';
+	$('openai_api_key').placeholder = s.openai_api_key ? 'saved (leave empty to keep)' : 'not set';
+	$('cg_model').value = s.chatgpt.model;
+	$('job_urls').value = (s.job_urls || []).join('\n');
+	$('boards').innerHTML = Object.entries(st.boards).map(([id, label]) =>
+		`<label><input type="checkbox" value="${id}" ${s.boards.includes(id) ? 'checked' : ''}> ${esc(label)}</label>`).join('');
+	$('home').textContent = 'Data folder: ' + st.home;
+	$('version').textContent = 'JobApply ' + st.version;
+	showProvider();
+}
+
+function setupData() {
+	const cg = {model: $('cg_model').value.trim()};
+	return {
+		cover_letter_tone: $('cover_letter_tone').value.trim(), provider: $('provider').value,
+		gemini_model: $('gemini_model').value.trim(), gemini_api_key: $('gemini_api_key').value.trim(),
+		openai_model: $('openai_model').value.trim(), openai_api_key: $('openai_api_key').value.trim(),
+		chatgpt: cg, daily_cap: $('daily_cap').value, job_urls: $('job_urls').value,
+		boards: [...document.querySelectorAll('#boards input:checked')].map(i => i.value),
+	};
+}
+
+$('save').onclick = async () => {
+	await call('save_settings', setupData());
+	$('gemini_api_key').value = $('openai_api_key').value = '';
+	toast('Settings saved.'); refresh(true);
+};
+document.querySelectorAll('[data-pick]').forEach(b => b.onclick = async () => { await call('pick_file', b.dataset.pick); refresh(true); });
+document.querySelectorAll('[data-starter]').forEach(b => b.onclick = async () => {
+	const r = await call('create_starter', b.dataset.starter); toast('Created ' + r.path + ' and opened it for editing.', 6000); refresh(true);
+});
+$('builtin').onclick = async () => { await call('save_settings', {resume_template_path: ''}); refresh(true); };
+$('autobrowser').onclick = async () => { await call('save_settings', {browser_executable: ''}); refresh(true); };
+$('chatgpt_login').onclick = async () => {
+	await call('save_settings', setupData());
+	toast('Finish signing in in your web browser...', 8000);
+	const r = await call('chatgpt_login'); toast('Signed in' + (r.email ? ' as ' + r.email : '') + '.'); refresh(true);
+};
+$('loginbrowser').onclick = async () => { await call('open_login_browser'); toast('Sign in, then close that browser window and press Start.', 8000); };
+function showUpdate(version) {
+	$('updatebadge').hidden = $('installupdate').hidden = false;
+	$('updatebadge').textContent = 'Update to ' + version;
+	$('installupdate').textContent = 'Install version ' + version;
+	$('updatestatus').textContent = 'Version ' + version + ' is available.';
+}
+$('checkupdate').onclick = async () => {
+	$('updatestatus').textContent = 'Checking...';
+	const r = await call('check_update').catch(() => null);
+	if (!r) return ($('updatestatus').textContent = '');
+	if (r.release) showUpdate(r.release.version); else $('updatestatus').textContent = 'You have the newest version.';
+};
+async function installUpdate() {
+	if (!confirm('Install the update now? JobApply and its browser close, then the new version opens.')) return;
+	await call('install_update');
+	$('updatestatus').textContent = 'Downloading...';
+}
+$('installupdate').onclick = installUpdate;
+$('updatebadge').onclick = installUpdate;
+$('chatgpt_logout').onclick = async () => { await call('chatgpt_logout'); refresh(true); };
+
+$('start').onclick = async () => {
+	if (state && state.runner === 'paused') return call('resume');
+	await call('save_settings', setupData()).catch(() => {});
+	await call('start'); toast('Starting the browser...');
+};
+$('pause').onclick = () => call(state && state.runner === 'paused' ? 'resume' : 'pause');
+$('stop').onclick = () => call('stop');
+$('opencsv').onclick = () => call('open_csv');
+$('openhome').onclick = () => call('open_path', '');
+
+let shownQuestions = null;
+function renderQuestions(qs) {
+	$('qbadge').hidden = !qs.length; $('qbadge').textContent = qs.length;
+	// Rebuilt only when the questions change: the page refreshes every second while the loop runs, and rebuilding
+	// replaced the input being typed into
+	const key = JSON.stringify(qs.map(q => [q.id, q.jobs]));
+	if (key === shownQuestions) return;
+	shownQuestions = key;
+	const typed = {};
+	document.querySelectorAll('#qlist input[id^="a_"]').forEach(i => typed[i.id] = i.value);
+	const focused = document.activeElement && document.activeElement.id;
+	$('qlist').innerHTML = qs.length ? qs.map(q => {
+		const login = q.field_hint === 'login';
+		const meta = `${esc([q.company, q.title].filter(Boolean).join(' - '))}${q.jobs > 1 ? ` (asked by ${q.jobs} jobs)` : ''} ${esc(q.asked_at)}`;
+		const act = login
+			? `<span class="hint" style="flex:1">Log in in that job's tab in the JobApply browser, then click Done.</span><button class="btn" data-done="${q.id}">Done</button>`
+			: `<input type="text" id="a_${q.id}" placeholder="Your answer" style="flex:1"><button class="btn" data-answer="${q.id}">Save answer</button><button class="btn ghost" data-done="${q.id}" title="Remove without saving an answer">Skip</button>`;
+		return `<div class="q"><div><b>${esc(q.question)}</b></div><div class="meta">${meta}</div><div class="row">${act}</div></div>`;
+	}).join('') : '<div class="empty">No open questions.</div>';
+	for (const [id, value] of Object.entries(typed)) if ($(id)) $(id).value = value;
+	if (focused && $(focused)) $(focused).focus();
+	document.querySelectorAll('[data-answer]').forEach(b => b.onclick = async () => {
+		await call('answer', b.dataset.answer, $('a_' + b.dataset.answer).value); toast('Saved to your profile.'); refresh(false);
+	});
+	document.querySelectorAll('[data-answer]').forEach(b => {
+		const input = $('a_' + b.dataset.answer);
+		if (input) input.onkeydown = e => { if (e.key === 'Enter') b.click(); };
+	});
+	document.querySelectorAll('[data-done]').forEach(b => b.onclick = async () => { await call('dismiss', b.dataset.done); refresh(false); });
+}
+
+function renderRows(rows) {
+	$('rows').innerHTML = rows.length ? rows.map(r => `<tr>
+		<td>${esc(r.date)}<br><span class="hint">${esc(r.time)}</span></td>
+		<td><b>${esc(r.company || '-')}</b><br>${esc(r.title)}<br><a data-url="${esc(r.url)}">posting</a>${r.tab_id ? ` · <a data-tab-id="${esc(r.tab_id)}">show tab</a>` : ''}</td>
+		<td><span class="pill ${esc(r.status)}">${esc(r.status.replace('_', ' '))}</span></td>
+		<td>${r.resume ? `<a data-open="${esc(r.resume)}">resume</a>` : ''}${r.cover_letter ? `<br><a data-open="${esc(r.cover_letter)}">cover letter</a>` : ''}</td>
+		<td>${esc(r.notes)}${r.unanswered_questions ? `<div class="hint">Unanswered: ${esc(r.unanswered_questions)}</div>` : ''}</td></tr>`).join('')
+		: '<tr><td colspan="5" class="empty">No applications yet.</td></tr>';
+	document.querySelectorAll('[data-open]').forEach(a => a.onclick = () => call('open_path', a.dataset.open));
+	document.querySelectorAll('[data-url]').forEach(a => a.onclick = () => call('open_path', a.dataset.url));
+	document.querySelectorAll('[data-tab-id]').forEach(a => a.onclick = () => call('focus_tab', a.dataset.tabId));
+}
+
+function renderState(st) {
+	const r = st.runner;
+	$('state').textContent = r; $('state').className = 'state ' + r;
+	$('today').textContent = st.today; $('cap').textContent = st.cap;
+	$('start').textContent = r === 'paused' ? 'Resume' : 'Start';
+	$('start').disabled = !(r === 'idle' || r === 'paused');
+	$('pause').disabled = !(r === 'running' || r === 'paused' || r === 'starting');
+	$('pause').textContent = r === 'paused' ? 'Resume' : 'Pause';
+	$('stop').disabled = r === 'idle' || r === 'stopping';
+	const c = st.current || {};
+	$('current').textContent = c.phase === 'apply' ? `Applying: ${[c.title, c.company].filter(Boolean).join(' at ') || c.url}`
+		: c.phase === 'search' ? `Searching ${c.board}...` : '';
+	$('chatgpt_status').textContent = !st.chatgpt.signed_in ? 'Not signed in'
+		: 'Signed in' + (st.chatgpt.email ? ' as ' + st.chatgpt.email : '') + (st.chatgpt.plan_usage ? '' : ' (plan use not allowed: sign in again)');
+}
+
+async function refresh(full) {
+	const st = await api.state();
+	state = st;
+	renderState(st);
+	renderQuestions(st.questions);
+	renderRows(st.rows);
+	if (full) fillSetup(st);
+}
+
+async function poll() {
+	try {
+		const events = await api.events(since);
+		if (events.length) {
+			const log = $('log');
+			if (log.querySelector('.empty')) log.innerHTML = '';
+			let changed = false;
+			for (const e of events) {
+				since = e.seq;
+				let text = null, cls = '';
+				if (e.kind === 'log') { text = e.text; cls = e.level; }
+				else if (e.kind === 'blocked') { text = `Guard held "${e.text}" for your review.`; cls = 'blocked'; }
+				else if (e.kind === 'question') text = `Question for you: ${e.question}`;
+				else if (e.kind === 'update') {
+					if (e.stage === 'available') { showUpdate(e.version); text = `Version ${e.version} is available: Setup > Updates.`; }
+					else if (e.stage === 'download') $('updatestatus').textContent = e.total ? `Downloading ${Math.round(100 * e.done / e.total)}%` : 'Downloading...';
+					else if (e.stage === 'installing') { $('updatestatus').textContent = 'Installing; JobApply will reopen.'; text = `Installing version ${e.version}...`; }
+					else if (e.stage === 'error') { $('updatestatus').textContent = e.text; text = 'Update failed: ' + e.text; cls = 'error'; }
+				}
+				else if (e.kind === 'job') text = `${e.row.status.replace('_', ' ')}: ${[e.row.title, e.row.company].filter(Boolean).join(' at ')} (${e.today}/${e.cap} today)`;
+				if (text) { const d = document.createElement('div'); d.className = cls; d.innerHTML = `<time>${esc(e.time)}</time>${esc(text)}`; log.appendChild(d); }
+				changed = true;
+			}
+			log.scrollTop = log.scrollHeight;
+			if (changed) await refresh(false);
+		} else if (state && state.runner !== 'idle') {
+			await refresh(false);
+		}
+	} catch (e) { /* the window is closing */ }
+	setTimeout(poll, 1000);
+}
+
+window.addEventListener('pywebviewready', async () => {
+	api = window.pywebview.api;
+	await refresh(true);
+	poll();
+});
+</script>
+</body>
+</html>

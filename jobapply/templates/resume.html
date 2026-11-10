@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{name}} - Resume</title>
+<style>
+	@page { size: A4; margin: 14mm 15mm; }
+	* { box-sizing: border-box; }
+	body { font-family: "Segoe UI", Calibri, Arial, sans-serif; font-size: 10.5pt; line-height: 1.38; color: #1d2329; margin: 0; }
+	header { border-bottom: 2px solid #1f4e79; padding-bottom: 6px; margin-bottom: 10px; }
+	h1 { font-size: 21pt; margin: 0; letter-spacing: .3px; color: #12304d; }
+	.headline { font-size: 11.5pt; color: #1f4e79; margin-top: 1px; }
+	.contact { font-size: 9.5pt; color: #444; margin-top: 4px; }
+	.contact span + span::before { content: "  |  "; color: #9aa5b1; }
+	.contact a { color: #444; text-decoration: none; }
+	h2 { font-size: 10.5pt; text-transform: uppercase; letter-spacing: 1.2px; color: #1f4e79; margin: 12px 0 4px;
+		border-bottom: 1px solid #d5dde5; padding-bottom: 2px; }
+	.item { margin-bottom: 7px; page-break-inside: avoid; }
+	.row { display: flex; justify-content: space-between; gap: 12px; }
+	.what { font-weight: 600; }
+	.where { color: #333; }
+	.when { color: #555; white-space: nowrap; font-size: 9.5pt; }
+	ul { margin: 2px 0 0; padding-left: 16px; }
+	li { margin: 1px 0; }
+	.skills div { margin: 1px 0; }
+	.skills b { font-weight: 600; }
+	p { margin: 0; }
+</style>
+</head>
+<body>
+<header>
+	<h1>{{name}}</h1>
+	{{#headline}}<div class="headline">{{headline}}</div>{{/headline}}
+	<div class="contact">
+		{{#location}}<span>{{location}}</span>{{/location}}
+		{{#email}}<span>{{email}}</span>{{/email}}
+		{{#phone}}<span>{{phone}}</span>{{/phone}}
+		{{#links}}<span><a href="{{url}}">{{label}}</a></span>{{/links}}
+	</div>
+</header>
+
+{{#summary}}
+<h2>Summary</h2>
+<p>{{summary}}</p>
+{{/summary}}
+
+{{#skills.0}}
+<h2>Skills</h2>
+<div class="skills">
+	{{#skills}}<div>{{#name}}<b>{{name}}:</b> {{/name}}{{joined}}</div>{{/skills}}
+</div>
+{{/skills.0}}
+
+{{#experience.0}}
+<h2>Experience</h2>
+{{#experience}}
+<div class="item">
+	<div class="row"><div><span class="what">{{title}}</span>{{#company}} <span class="where">- {{company}}</span>{{/company}}{{#location}}<span class="where">, {{location}}</span>{{/location}}</div><div class="when">{{start}}{{#start}}{{#end}} - {{/end}}{{/start}}{{end}}</div></div>
+	{{#bullets.0}}<ul>{{#bullets}}<li>{{.}}</li>{{/bullets}}</ul>{{/bullets.0}}
+</div>
+{{/experience}}
+{{/experience.0}}
+
+{{#projects.0}}
+<h2>Projects</h2>
+{{#projects}}
+<div class="item">
+	<div class="row"><div><span class="what">{{name}}</span>{{#link}} <span class="where">- {{link}}</span>{{/link}}</div></div>
+	{{#bullets.0}}<ul>{{#bullets}}<li>{{.}}</li>{{/bullets}}</ul>{{/bullets.0}}
+</div>
+{{/projects}}
+{{/projects.0}}
+
+{{#education.0}}
+<h2>Education</h2>
+{{#education}}
+<div class="item">
+	<div class="row"><div><span class="what">{{degree}}</span>{{#school}} <span class="where">- {{school}}</span>{{/school}}{{#location}}<span class="where">, {{location}}</span>{{/location}}</div><div class="when">{{start}}{{#start}}{{#end}} - {{/end}}{{/start}}{{end}}</div></div>
+	{{#details.0}}<ul>{{#details}}<li>{{.}}</li>{{/details}}</ul>{{/details.0}}
+</div>
+{{/education}}
+{{/education.0}}
+
+{{#certifications.0}}
+<h2>Certifications</h2>
+<ul>{{#certifications}}<li>{{.}}</li>{{/certifications}}</ul>
+{{/certifications.0}}
+
+{{#languages.0}}
+<h2>Languages</h2>
+<p>{{languages_joined}}</p>
+{{/languages.0}}
+</body>
+</html>

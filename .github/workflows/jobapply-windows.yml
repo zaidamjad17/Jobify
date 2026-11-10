@@ -1,0 +1,89 @@
+name: jobapply-windows
+# Builds JobApply-Setup-<version>.exe (PyInstaller + Inno Setup). Every run uploads it as a workflow artifact.
+# On main, a new __version__ in jobapply/__init__.py publishes release jobapply-v<version> with the installer: the
+# app's updater (jobapply/updater.py) offers it to every installed copy. A jobapply-v* tag pushed by hand does too.
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'jobapply/**'
+      - 'packaging/windows/**'
+      - '.github/workflows/jobapply-windows.yml'
+    tags:
+      - 'jobapply-v*'
+  pull_request:
+    paths:
+      - 'jobapply/**'
+      - 'packaging/windows/**'
+      - '.github/workflows/jobapply-windows.yml'
+
+env:
+  ANONYMIZED_TELEMETRY: 'false'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write  # publishes the release on main / a jobapply-v* tag
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked --group jobapply --python 3.12
+      - name: Tests (no browser)
+        run: uv run --no-sync pytest tests/ci/test_jobapply.py
+      - name: PyInstaller
+        run: uv run --no-sync --with pyinstaller==6.22.3 pyinstaller packaging/windows/jobapply.spec --noconfirm
+      - name: The exe runs browser-use's helper processes
+        shell: bash
+        run: |
+          out=$(dist/JobApply/JobApply.exe -I -c "import sys, browser_use.repl.worker, browser_harness.daemon; sys.stdout.reconfigure(line_buffering=True); print('helpers ok')" | cat)
+          echo "$out"
+          test "$out" = "helpers ok"
+      - name: The exe runs an agent on a local browser
+        shell: pwsh
+        run: |
+          $chrome = @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+          $smoke = (Resolve-Path packaging\windows\smoke_frozen.py).Path
+          $out = & dist\JobApply\JobApply.exe -c "import runpy, sys; sys.argv = ['smoke', r'$chrome']; runpy.run_path(r'$smoke', run_name='__main__')" | Out-String
+          Write-Output $out
+          if ($out -notmatch 'frozen smoke ok') { exit 1 }
+      - name: Installer
+        shell: pwsh
+        run: |
+          $version = (uv run --no-sync python -c "import jobapply; print(jobapply.__version__)").Trim()
+          if ("${{ github.ref_type }}" -eq "tag") { $version = "${{ github.ref_name }}".Replace("jobapply-v", "") }
+          "JOBAPPLY_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          $env:JOBAPPLY_VERSION = $version
+          & $iscc packaging\windows\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: JobApply-Setup-${{ env.JOBAPPLY_VERSION }}
+          path: dist/JobApply-Setup-*.exe
+      - name: Publish the release (the app's updater offers it)
+        if: github.ref_type == 'tag' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="jobapply-v${JOBAPPLY_VERSION}"
+          if [ "${{ github.ref_type }}" != "tag" ] && gh release view "$tag" >/dev/null 2>&1; then
+            echo "Release $tag exists: bump __version__ in jobapply/__init__.py to publish an update."
+            exit 0
+          fi
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --target "$GITHUB_SHA" --title "JobApply ${JOBAPPLY_VERSION}" \
+              --notes "Windows installer for JobApply ${JOBAPPLY_VERSION}. Installed copies offer it under Setup > Updates."
+          fi
+          gh release upload "$tag" dist/JobApply-Setup-*.exe --clobber
