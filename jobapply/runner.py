@@ -377,7 +377,8 @@ class Runner:
 		steps.addHandler(watch)
 		self._interrupt = None
 		backup = self.settings.backup_provider
-		plan: list[tuple[str | None, float | None]] = [(None, w) for w in RETRY_WAITS_S] + [(None, None)]
+		plan: list[tuple[str | None, float | None]] = [(None, w) for w in RETRY_WAITS_S]
+		plan.append((None, None))  # the last try on the main model
 		if backup:
 			plan.append((backup, None))
 		try:
