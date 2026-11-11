@@ -1,4 +1,4 @@
-"""The JobApply loop end to end on a local headless Chrome, with scripted models (no provider calls).
+"""The Jobify loop end to end on a local headless Chrome, with scripted models (no provider calls).
 
 One pasted job: the agent writes the documents, sends a question, tries to press Submit (the guard holds it), and
 finishes. The row is logged as needs_input, the PDFs exist, the question is open, and the tab is unlocked for the user."""
@@ -678,7 +678,7 @@ CHECK_FORM = """<!doctype html><html><body><form>
 
 def test_a_finished_job_lists_empty_required_fields_and_errors_and_keeps_a_screenshot(tmp_path, monkeypatch):
 	"""Final check: History says whether the form is really ready (required fields still empty, error messages on the
-	page) and keeps a screenshot of the form as JobApply left it."""
+	page) and keeps a screenshot of the form as Jobify left it."""
 	r, urls, seen, events, profile = _runner_with(tmp_path, monkeypatch, {'form.html': CHECK_FORM}, _filled('x'))
 	try:
 		r.start()

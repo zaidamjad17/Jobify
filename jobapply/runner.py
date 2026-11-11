@@ -69,9 +69,9 @@ def page_problem(state: dict, label: str) -> str | None:
 	"""What a pre-flight page shows: None when usable, else what the user has to do."""
 	where = f'{state.get("url", "")} {state.get("title", "")}'
 	if BOT_CHECK.search(where) or BOT_CHECK.search(state.get('text', '')[:1500]):
-		return f'{label} shows a bot check (captcha / "verify you are human"): solve it in the JobApply browser'
+		return f'{label} shows a bot check (captcha / "verify you are human"): solve it in the Jobify browser'
 	if state.get('password') or LOGIN_PAGE.search(state.get('url', '')):
-		return f'Log in to {label} in the JobApply browser'
+		return f'Log in to {label} in the Jobify browser'
 	return None
 
 
@@ -353,7 +353,7 @@ class Runner:
 		self._log(
 			'Done finishing your answered applications.'
 			if self._refill_only
-			else 'Loop finished. Your filled tabs stay open in the JobApply browser for review.'
+			else 'Loop finished. Your filled tabs stay open in the Jobify browser for review.'
 		)
 		self._log(self.summary())
 
@@ -767,14 +767,14 @@ class Runner:
 		"""An interrupted job waits: after a take-over it is finished first on resume(); when stuck, it waits for the
 		user in Questions (Done sends the agent back)."""
 		if reason == 'hold':
-			notes = 'Paused while you took over; JobApply finishes it when you click Continue.'
+			notes = 'Paused while you took over; Jobify finishes it when you click Continue.'
 			self.request_refill(job['url'], first=True)
 		else:
 			notes = 'The agent got stuck repeating the same step on this page.'
 			q = self.questions.ask(
 				Question(
-					question=f'JobApply got stuck on {job.get("company") or "this application"}. Finish it in its tab and '
-					'click Submitted, or click Done to let JobApply try again.',
+					question=f'Jobify got stuck on {job.get("company") or "this application"}. Finish it in its tab and '
+					'click Submitted, or click Done to let Jobify try again.',
 					field_hint='help',
 					company=job.get('company', ''),
 					url=job['url'],

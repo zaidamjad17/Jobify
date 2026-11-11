@@ -220,7 +220,7 @@ FINAL_CHECK_JS = r"""
 
 
 def final_check(ws_url: str, tab: str, screenshot_path) -> dict:
-	"""The form as JobApply left it: required fields still empty, visible error messages, and a screenshot.
+	"""The form as Jobify left it: required fields still empty, visible error messages, and a screenshot.
 	-> {'empty': [...], 'errors': [...], 'summary': str, 'screenshot': str}"""
 	import base64
 

@@ -66,7 +66,7 @@ class Api:
 			self._to_front()
 
 	def _to_front(self) -> None:
-		"""The agent needs the user: show the JobApply window over everything for a moment (the page plays a sound)."""
+		"""The agent needs the user: show the Jobify window over everything for a moment (the page plays a sound)."""
 		window = self._window
 		if window is None:
 			return
@@ -193,11 +193,11 @@ class Api:
 	# loop
 
 	def open_login_browser(self) -> dict:
-		"""The JobApply browser profile opened normally, without the remote debugging port the loop drives it through:
+		"""The Jobify browser profile opened normally, without the remote debugging port the loop drives it through:
 		Google refuses to sign in a remote-controlled browser ("This browser or app may not be secure"). The logins are
 		saved in the profile, and the loop's browser uses them."""
 		if self._runner is not None and self._runner.browser is not None:
-			return {'error': 'Stop the loop first: the JobApply browser is in use. Then log in, close that window and Start.'}
+			return {'error': 'Stop the loop first: the Jobify browser is in use. Then log in, close that window and Start.'}
 		if self._login_open():
 			return {'error': 'The login browser is already open.'}
 		from browser_use.browser.local import find_binary
@@ -432,11 +432,11 @@ def main() -> None:
 	try:
 		import webview  # pyright: ignore[reportMissingImports]
 	except ImportError:
-		raise SystemExit("JobApply's window needs pywebview: uv sync --extra jobapply") from None
+		raise SystemExit("Jobify's window needs pywebview: uv sync --extra jobapply") from None
 
 	api = Api()
 	window = webview.create_window(
-		'JobApply',
+		'Jobify',
 		url=str(resource('ui/index.html')),
 		js_api=api,
 		width=1180,
@@ -446,7 +446,8 @@ def main() -> None:
 	api._window = window
 	assert window is not None
 	window.events.closed += api.shutdown
-	webview.start(api._check_update_in_background)  # runs once the window is up
+	# icon: the window/taskbar icon on Linux and macOS; on Windows the window takes Jobify.exe's icon (jobify.ico)
+	webview.start(api._check_update_in_background, icon=str(resource('ui/logo.png')))  # runs once the window is up
 
 
 if __name__ == '__main__':

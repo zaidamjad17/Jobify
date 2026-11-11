@@ -1,4 +1,4 @@
-"""JobApply without a browser: settings, the applications CSV, questions, templates, documents, ChatGPT sign-in."""
+"""Jobify without a browser: settings, the applications CSV, questions, templates, documents, ChatGPT sign-in."""
 
 import json
 import threading
@@ -29,6 +29,21 @@ PROFILE = """# Profile
 def home(tmp_path, monkeypatch):
 	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
 	return tmp_path / 'home'
+
+
+def test_app_home_keeps_the_jobapply_folder_after_the_rename(tmp_path, monkeypatch):
+	"""The app was renamed JobApply -> Jobify: an existing JobApply data folder (logins, profile, history) stays in use."""
+	from jobapply import paths
+
+	monkeypatch.delenv('JOBAPPLY_HOME')
+	monkeypatch.setattr(paths.sys, 'platform', 'win32')
+	monkeypatch.setenv('APPDATA', str(tmp_path / 'roaming'))
+	assert paths.app_home() == tmp_path / 'roaming' / 'Jobify'  # a new install
+	(tmp_path / 'roaming' / 'Jobify').rmdir()
+	(tmp_path / 'roaming' / 'JobApply').mkdir()
+	assert paths.app_home() == tmp_path / 'roaming' / 'JobApply'
+	monkeypatch.setenv('JOBIFY_HOME', str(tmp_path / 'custom'))
+	assert paths.app_home() == tmp_path / 'custom'
 
 
 def test_settings_round_trip_and_hide_keys():
@@ -173,11 +188,11 @@ async def test_tailor_sends_invented_facts_back_to_the_model():
 
 
 def test_frozen_dispatch_runs_module_and_code(monkeypatch, tmp_path, capsys):
-	assert frozen.dispatch(['JobApply.exe']) is False
-	assert frozen.dispatch(['JobApply.exe', '-I', '-c', 'print("hi", __name__)']) is True
+	assert frozen.dispatch(['Jobify.exe']) is False
+	assert frozen.dispatch(['Jobify.exe', '-I', '-c', 'print("hi", __name__)']) is True
 	(tmp_path / 'jobapply_probe.py').write_text('import sys\nprint("mod", sys.argv[1:], __name__)\n')
 	monkeypatch.syspath_prepend(str(tmp_path))
-	assert frozen.dispatch(['JobApply.exe', '-P', '-m', 'jobapply_probe', 'x']) is True
+	assert frozen.dispatch(['Jobify.exe', '-P', '-m', 'jobapply_probe', 'x']) is True
 	assert capsys.readouterr().out.split('\n')[:2] == ['hi __main__', "mod ['x'] __main__"]
 
 
@@ -235,7 +250,7 @@ async def test_chatgpt_sign_in_registers_itself_and_runs_on_the_plan(monkeypatch
 	assert status == {'signed_in': True, 'email': 'ada@example.com', 'plan_usage': True}
 	first = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(urls[0]).query))
 	assert urls[0].startswith('https://auth.openai.com/api/accounts/authorize?')
-	assert first['client_id'] == 'dynamic_agent_client' and first['agent_name_hint'] == 'JobApply'
+	assert first['client_id'] == 'dynamic_agent_client' and first['agent_name_hint'] == 'Jobify'
 	assert first['ext_agent_host_id'].startswith('urn:uuid:') and first['code_challenge_method'] == 'S256'
 	assert 'chatgpt.tokens.use.direct' in first['scope'].split()
 	assert first['redirect_uri'] == f'http://127.0.0.1:{chatgpt_auth.REDIRECT_PORT}/auth/callback'
@@ -304,7 +319,7 @@ def test_csv_cells_that_excel_would_run_as_formulas_are_written_as_text(tmp_path
 
 
 def test_login_browser_opens_the_profile_without_remote_control(home, monkeypatch):
-	"""User report: Google refused to sign in ("This browser or app may not be secure") in the JobApply browser, which
+	"""User report: Google refused to sign in ("This browser or app may not be secure") in the Jobify browser, which
 	runs with a remote debugging port. Logins now happen in the same profile opened normally, and Start waits until
 	that window is closed (one profile can be open in one browser only)."""
 	from jobapply import app
@@ -351,7 +366,7 @@ def _release(tag: str, data: bytes = b'', **extra) -> dict:
 	import hashlib
 
 	asset = {
-		'name': f'JobApply-Setup-{tag.removeprefix("jobapply-v")}.exe',
+		'name': f'Jobify-Setup-{tag.removeprefix("jobapply-v")}.exe',
 		'browser_download_url': f'https://github.com/dl/{tag}.exe',
 		'size': len(data),
 		'digest': 'sha256:' + hashlib.sha256(data).hexdigest(),
@@ -372,7 +387,7 @@ def test_update_check_offers_the_newest_installer_above_the_running_version():
 		_release('jobapply-v0.2.0-beta'),
 	]
 	found = updater.check('0.1.0', client=_github(releases, {}))
-	assert found is not None and (found.version, found.name) == ('0.2.0', 'JobApply-Setup-0.2.0.exe')
+	assert found is not None and (found.version, found.name) == ('0.2.0', 'Jobify-Setup-0.2.0.exe')
 	assert updater.check('0.2.0', client=_github(releases, {})) is None
 	assert (
 		updater.check('0.1.0', client=_github([_release('jobapply-v0.9.0'), _release('jobapply-v0.10.0')], {})).version

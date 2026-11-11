@@ -1,4 +1,4 @@
-"""JobApply's submit guard on a real headless Chrome: trusted clicks, keys and scripts cannot submit until release()."""
+"""Jobify's submit guard on a real headless Chrome: trusted clicks, keys and scripts cannot submit until release()."""
 
 import contextlib
 import time

@@ -135,7 +135,7 @@ dev = [
     "pyright==1.1.408",
     "pyyaml==6.0.3",  # tests/ci/test_workflows.py reads the workflow files
 ]
-# JobApply desktop app (jobapply/, not part of the browser-use wheel): uv sync --group jobapply; uv run python -m jobapply
+# Jobify desktop app (jobapply/, not part of the browser-use wheel): uv sync --group jobapply; uv run python -m jobapply
 jobapply = [
     "pywebview==6.2.1",
 ]

@@ -43,7 +43,7 @@ class Row:
 	unanswered_questions: str = ''
 	notes: str = ''
 	check: str = ''  # the final check: required fields still empty, error messages on the form
-	screenshot: str = ''  # the form as JobApply left it (PNG)
+	screenshot: str = ''  # the form as Jobify left it (PNG)
 
 
 COLUMNS = [f.name for f in fields(Row)]

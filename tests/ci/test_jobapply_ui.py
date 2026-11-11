@@ -1,4 +1,4 @@
-"""The JobApply window's page (jobapply/ui/index.html) in headless Chrome, with a stub of the Python API."""
+"""The Jobify window's page (jobapply/ui/index.html) in headless Chrome, with a stub of the Python API."""
 
 import json
 import time
@@ -81,7 +81,7 @@ STATE = {
 		},
 		{
 			'id': 'q2',
-			'question': 'Please log in to Teradata in the JobApply browser',
+			'question': 'Please log in to Teradata in the Jobify browser',
 			'field_hint': 'login',
 			'company': 'Teradata',
 			'title': 'Dev',

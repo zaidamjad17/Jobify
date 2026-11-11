@@ -1,4 +1,4 @@
-"""In the packaged app sys.executable is JobApply.exe, not python.exe. browser-use and browser-harness start helper
+"""In the packaged app sys.executable is Jobify.exe, not python.exe. browser-use and browser-harness start helper
 processes as `sys.executable [-P|-I|-u] -m module ...` or `sys.executable -c code ...` (the REPL worker, the CDP
 daemon, watchdogs): dispatch() runs those inside the exe as python would."""
 

@@ -3,20 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>JobApply</title>
+<title>Jobify</title>
+<link rel="icon" type="image/png" href="logo.png">
 <style>
 	:root {
 		--bg: #f4f6f9; --panel: #ffffff; --ink: #18212b; --muted: #5d6b7a; --line: #dfe5ec;
-		--accent: #1f5f99; --accent-ink: #ffffff; --ok: #1d7a46; --warn: #a15c00; --bad: #b42318; --chip: #eef3f8;
+		--accent: #c8501d; --accent-ink: #ffffff; --ok: #1d7a46; --warn: #a15c00; --bad: #b42318; --chip: #eef3f8; --brand: #f06a2f;
 	}
 	@media (prefers-color-scheme: dark) {
 		:root { --bg: #11161c; --panel: #19212a; --ink: #e6edf3; --muted: #9aa8b6; --line: #2a3542;
-			--accent: #5aa1e0; --accent-ink: #0d1116; --ok: #4cc287; --warn: #e3a344; --bad: #f07167; --chip: #223040; }
+			--accent: #f37a45; --accent-ink: #0d1116; --ok: #4cc287; --warn: #e3a344; --bad: #f07167; --chip: #223040; }
 	}
 	* { box-sizing: border-box; }
 	body { margin: 0; font: 14px/1.45 "Segoe UI", system-ui, -apple-system, Arial, sans-serif; background: var(--bg); color: var(--ink); }
 	header { display: flex; align-items: center; gap: 18px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
-	header h1 { font-size: 18px; margin: 0; letter-spacing: .2px; }
+	header h1 { display: flex; align-items: center; gap: 9px; font-size: 19px; margin: 0; letter-spacing: .1px; font-weight: 700; }
+	header h1 img { width: 30px; height: 30px; display: block; }
+	header h1 b { color: var(--brand); font-weight: inherit; }
 	nav { display: flex; gap: 4px; }
 	nav button { background: none; border: 0; color: var(--muted); padding: 7px 12px; border-radius: 6px; cursor: pointer; font: inherit; }
 	nav button.on { background: var(--chip); color: var(--ink); font-weight: 600; }
@@ -77,7 +80,7 @@
 </head>
 <body>
 <header>
-	<h1>JobApply</h1>
+	<h1><img src="logo.png" alt=""><span>Job<b>ify</b></span></h1>
 	<nav>
 		<button data-tab="run" class="on">Run</button>
 		<button data-tab="questions">Questions <span id="qbadge" class="badge" hidden></span></button>
@@ -91,7 +94,7 @@
 </header>
 <main>
 	<div class="helpbar" id="helpbar" hidden>
-		<div><b>JobApply needs you</b> <span id="helpreason"></span><div class="hint" id="helphint"></div></div>
+		<div><b>Jobify needs you</b> <span id="helpreason"></span><div class="hint" id="helphint"></div></div>
 		<button class="btn" id="helpdone">I did it, continue</button>
 	</div>
 	<section id="run" class="on">
@@ -104,7 +107,7 @@
 				<div class="spacer"></div>
 				<span class="current" id="current"></span>
 			</div>
-			<div class="hint">It fills one job per tab and never presses Submit or Send. Filled tabs stay open in the JobApply browser; review each one and submit it yourself. Pause waits for the current job to finish; Stop cancels it.</div>
+			<div class="hint">It fills one job per tab and never presses Submit or Send. Filled tabs stay open in the Jobify browser; review each one and submit it yourself. Pause waits for the current job to finish; Stop cancels it.</div>
 		</div>
 		<div class="card">
 			<h2>Activity</h2>
@@ -115,7 +118,7 @@
 	<section id="questions">
 		<div class="card">
 			<h2>Questions from applications</h2>
-			<div class="hint">The agent left these fields empty and kept going. Your answer is saved to your profile and used for every later application. When all questions of a job are answered (or closed with Done / Skip), JobApply goes back to that application and fills them in for you.</div>
+			<div class="hint">The agent left these fields empty and kept going. Your answer is saved to your profile and used for every later application. When all questions of a job are answered (or closed with Done / Skip), Jobify goes back to that application and fills them in for you.</div>
 			<div id="qlist"></div>
 		</div>
 	</section>
@@ -151,7 +154,7 @@
 		<div class="card">
 			<h2>Logins</h2>
 			<div class="row"><button class="btn" id="loginbrowser">Log in to sites</button>
-				<span class="hint">Opens the JobApply browser normally (Google, LinkedIn, Indeed). Sign in, close that window, then press Start. Google blocks sign-in while the browser is remote-controlled, so log in here, not during a run.</span></div>
+				<span class="hint">Opens the Jobify browser normally (Google, LinkedIn, Indeed). Sign in, close that window, then press Start. Google blocks sign-in while the browser is remote-controlled, so log in here, not during a run.</span></div>
 		</div>
 		<div class="card">
 			<h2>AI model</h2>
@@ -191,9 +194,9 @@
 		</div>
 		<div class="card">
 			<h2>Updates</h2>
-			<div class="row"><span id="version">JobApply</span><button class="btn ghost" id="checkupdate">Check for updates</button>
+			<div class="row"><span id="version">Jobify</span><button class="btn ghost" id="checkupdate">Check for updates</button>
 				<button class="btn" id="installupdate" hidden>Install update</button><span class="hint" id="updatestatus"></span></div>
-			<div class="hint">The app checks when it starts. Installing closes JobApply (and its browser), updates it, and opens the new version. Your settings, profile and history are kept.</div>
+			<div class="hint">The app checks when it starts. Installing closes Jobify (and its browser), updates it, and opens the new version. Your settings, profile and history are kept.</div>
 		</div>
 		<div class="row"><button class="btn" id="save">Save settings</button><span class="hint" id="home"></span></div>
 	</section>
@@ -245,7 +248,7 @@ function fillSetup(st) {
 	$('boards').innerHTML = Object.entries(st.boards).map(([id, label]) =>
 		`<label><input type="checkbox" value="${id}" ${s.boards.includes(id) ? 'checked' : ''}> ${esc(label)}</label>`).join('');
 	$('home').textContent = 'Data folder: ' + st.home;
-	$('version').textContent = 'JobApply ' + st.version;
+	$('version').textContent = 'Jobify ' + st.version;
 	showProvider();
 }
 
@@ -291,7 +294,7 @@ $('checkupdate').onclick = async () => {
 	if (r.release) showUpdate(r.release.version); else $('updatestatus').textContent = 'You have the newest version.';
 };
 async function installUpdate() {
-	if (!confirm('Install the update now? JobApply and its browser close, then the new version opens.')) return;
+	if (!confirm('Install the update now? Jobify and its browser close, then the new version opens.')) return;
 	await call('install_update');
 	$('updatestatus').textContent = 'Downloading...';
 }
@@ -334,7 +337,7 @@ function startHelp(e) {
 	if (e.sound) beep();
 	let left = e.wait_s || 60;
 	clearInterval(helpTimer);
-	const tick = () => { $('helphint').textContent = left > 0 ? `In the browser tab, then click the button. If you are away, JobApply parks this job in ${left}s and goes on.` : 'Parked in Questions; the loop goes on.'; left--; };
+	const tick = () => { $('helphint').textContent = left > 0 ? `In the browser tab, then click the button. If you are away, Jobify parks this job in ${left}s and goes on.` : 'Parked in Questions; the loop goes on.'; left--; };
 	tick(); helpTimer = setInterval(tick, 1000);
 }
 
@@ -357,7 +360,7 @@ function renderQuestions(qs) {
 		const login = q.field_hint === 'login' || q.field_hint === 'help';
 		const meta = `${esc([q.company, q.title].filter(Boolean).join(' - '))}${q.jobs > 1 ? ` (asked by ${q.jobs} jobs)` : ''} ${esc(q.asked_at)}`;
 		const act = login
-			? `<span class="hint" style="flex:1">Do it in that job's tab in the JobApply browser (log in, solve the check, or finish it), then click Done.</span><button class="btn" data-done="${q.id}">Done</button>`
+			? `<span class="hint" style="flex:1">Do it in that job's tab in the Jobify browser (log in, solve the check, or finish it), then click Done.</span><button class="btn" data-done="${q.id}">Done</button>`
 			: `<input type="text" id="a_${q.id}" placeholder="Your answer" style="flex:1"><button class="btn" data-answer="${q.id}">Save answer</button><button class="btn ghost" data-done="${q.id}" title="Remove without saving an answer">Skip</button>`;
 		return `<div class="q"><div><b>${esc(q.question)}</b></div><div class="meta">${meta}</div><div class="row">${act}</div></div>`;
 	}).join('') : '<div class="empty">No open questions.</div>';
@@ -472,7 +475,7 @@ async function poll() {
 				else if (e.kind === 'update') {
 					if (e.stage === 'available') { showUpdate(e.version); text = `Version ${e.version} is available: Setup > Updates.`; }
 					else if (e.stage === 'download') $('updatestatus').textContent = e.total ? `Downloading ${Math.round(100 * e.done / e.total)}%` : 'Downloading...';
-					else if (e.stage === 'installing') { $('updatestatus').textContent = 'Installing; JobApply will reopen.'; text = `Installing version ${e.version}...`; }
+					else if (e.stage === 'installing') { $('updatestatus').textContent = 'Installing; Jobify will reopen.'; text = `Installing version ${e.version}...`; }
 					else if (e.stage === 'error') { $('updatestatus').textContent = e.text; text = 'Update failed: ' + e.text; cls = 'error'; }
 				}
 				else if (e.kind === 'job') text = `${e.row.status.replace('_', ' ')}: ${[e.row.title, e.row.company].filter(Boolean).join(' at ')} (${e.today}/${e.cap} today)`;

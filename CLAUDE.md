@@ -27,7 +27,7 @@ Agent(task, llm, browser).run()                  browser_use/agent/service.py   
 - Secrets (`sensitive_data`) are redacted from specific channels (listed in "Trust model" in MIGRATING.md), not sandboxed.
 - `browser-use` CLI and `--cli-mcp` (`browser_use/cli.py`, `browser_use/mcp/`) pipe Python to browser-harness.
 - `browser_use/skills/` ships the `browser-use` agent skill and its installer.
-- `jobapply/` is a separate Windows desktop app on this library (not in the wheel): a loop that fills job applications
+- `jobapply/` is Jobify, a separate Windows desktop app on this library (not in the wheel): a loop that fills job applications
   and stops before Submit (a CDP submit guard, `jobapply/guard.py`). See jobapply/README.md; tests are
   `tests/ci/test_jobapply*.py`; `uv sync --group jobapply` adds pywebview.
 

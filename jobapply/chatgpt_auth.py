@@ -4,7 +4,7 @@ OpenAI lets open-source and locally run apps use a signed-in user's ChatGPT plan
 (developers.openai.com/siwc/token-sharing-open-source). Pydantic AI implements the flow
 (`pydantic_ai.providers.openai_chatgpt`), and this module wires it into the app:
 
-- No client id to set up: the first sign-in registers JobApply for the user's ChatGPT account (dynamic registration,
+- No client id to set up: the first sign-in registers Jobify for the user's ChatGPT account (dynamic registration,
   identified by this installation's host id), and OpenAI returns the client id to reuse on later sign-ins.
 - The browser opens OpenAI's sign-in page; the code comes back to http://127.0.0.1:1455/auth/callback (OpenAI fixes
   the scheme, host and path; only the port may vary) and is exchanged with PKCE.
@@ -25,7 +25,7 @@ from typing import Any
 
 from jobapply.paths import app_home
 
-APP_NAME = 'JobApply'
+APP_NAME = 'Jobify'
 REDIRECT_PORT = 1455
 LOGIN_TIMEOUT_S = 300
 
@@ -129,7 +129,7 @@ async def login_async(open_browser: Callable[[str], Any] = webbrowser.open, ask_
 	if not credentials.plan_usage_granted:
 		raise AuthError(
 			'Signed in, but "Use your ChatGPT plan" was not allowed. Sign in again and approve it: '
-			'JobApply needs it to run the AI on your plan.'
+			'Jobify needs it to run the AI on your plan.'
 		)
 	return status()
 
