@@ -55,6 +55,20 @@ jobs:
           $out = & dist\Jobify\Jobify.exe -c "import runpy, sys; sys.argv = ['smoke', r'$chrome']; runpy.run_path(r'$smoke', run_name='__main__')" | Out-String
           Write-Output $out
           if ($out -notmatch 'frozen smoke ok') { exit 1 }
+      - name: The app window opens and stays open
+        # The steps above run the exe with -c and never open the window: 0.4.1 crashed on start (a PNG window icon)
+        # and none of them noticed. A crash shows a message box and is logged, so check the log as well as the process.
+        shell: pwsh
+        run: |
+          $env:JOBIFY_HOME = "$env:RUNNER_TEMP\jobify-home"
+          $app = Start-Process dist\Jobify\Jobify.exe -PassThru
+          Start-Sleep -Seconds 20
+          $log = Join-Path $env:JOBIFY_HOME 'jobapply.log'
+          if (Test-Path $log) { Get-Content $log }
+          $alive = -not $app.HasExited
+          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          if (-not $alive) { Write-Output "Jobify.exe exited (code $($app.ExitCode))"; exit 1 }
+          if ((Test-Path $log) -and (Select-String -Path $log -Pattern 'could not start' -Quiet)) { exit 1 }
       - name: Installer
         shell: pwsh
         run: |
