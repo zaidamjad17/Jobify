@@ -93,7 +93,7 @@ window.__state = %s;
 window.pywebview = { api: new Proxy({}, { get: (_, name) => async (...args) => {
 	window.__calls.push([name, ...args]);
 	if (name === 'state') return JSON.parse(JSON.stringify(window.__state));
-	if (name === 'events') return [];
+	if (name === 'events') { const e = window.__pending || []; window.__pending = []; return e; }
 	if (name === 'dismiss') { window.__state.questions = window.__state.questions.filter(q => q.id !== args[0]); return { ok: true }; }
 	return { ok: true };
 } }) };
@@ -168,6 +168,32 @@ def test_history_marks_a_job_submitted_and_sends_it_back_to_be_filled(chrome):
 		time.sleep(0.3)
 		calls = ev('window.__calls')
 		assert ['refill', 'https://jobs.ashbyhq.com/k/1'] in calls and ['mark_submitted', 'https://jobs.ashbyhq.com/k/1'] in calls
+	finally:
+		cdp.send('Target.closeTarget', targetId=target)
+		cdp.close()
+
+
+def test_a_handoff_shows_the_banner_plays_a_sound_and_continue_tells_the_agent(chrome):
+	"""The agent needs a person (captcha): a banner with the reason, a sound, and one button that lets it continue.
+	Take over is offered while the loop runs."""
+	cdp, session, target, ev = _page(chrome)
+	try:
+		assert ev('document.getElementById("helpbar").hidden') is True
+		assert ev('document.getElementById("takeover").disabled') is False  # the stub state is running
+		ev(
+			"""window.__pending = [{seq: 100, kind: 'help', time: 't', reason: 'Captcha on Acme', company: 'Acme', sound: true, wait_s: 60}]"""
+		)
+		for _ in range(40):
+			if ev('!document.getElementById("helpbar").hidden'):
+				break
+			time.sleep(0.1)
+		assert 'Captcha on Acme' in ev('document.getElementById("helpbar").innerText')
+		assert ev('window.__beeps || 0') == 1
+		ev('document.getElementById("helpdone").click()')
+		ev('document.getElementById("takeover").click()')
+		time.sleep(0.3)
+		calls = ev('window.__calls')
+		assert ['help_done'] in calls and ['take_over'] in calls
 	finally:
 		cdp.send('Target.closeTarget', targetId=target)
 		cdp.close()

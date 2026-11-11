@@ -62,6 +62,10 @@
 	.hint { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
 	.toast { position: fixed; bottom: 18px; right: 18px; background: var(--ink); color: var(--panel); padding: 10px 14px; border-radius: 8px; display: none; max-width: 460px; }
 	.empty { color: var(--muted); padding: 10px 0; }
+	.helpbar { position: sticky; top: 0; z-index: 5; display: flex; gap: 14px; align-items: center; justify-content: space-between;
+		background: #fff3cd; color: #4a3500; border: 1px solid #e0b400; border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; }
+	.helpbar[hidden] { display: none; }
+	.state.held { color: var(--warn); }
 	.provider-fields { display: none; } .provider-fields.on { display: contents; }
 	.current { font-size: 15px; }
 </style>
@@ -81,12 +85,17 @@
 	<span id="state" class="state">idle</span>
 </header>
 <main>
+	<div class="helpbar" id="helpbar" hidden>
+		<div><b>JobApply needs you</b> <span id="helpreason"></span><div class="hint" id="helphint"></div></div>
+		<button class="btn" id="helpdone">I did it, continue</button>
+	</div>
 	<section id="run" class="on">
 		<div class="card">
 			<div class="row">
 				<button class="btn" id="start">Start</button>
 				<button class="btn ghost" id="pause" disabled>Pause</button>
 				<button class="btn danger" id="stop" disabled>Stop</button>
+				<button class="btn ghost" id="takeover" disabled title="The agent stops after its current step so you can use the browser; Continue picks up where it was">Take over</button>
 				<div class="spacer"></div>
 				<span class="current" id="current"></span>
 			</div>
@@ -271,11 +280,44 @@ $('updatebadge').onclick = installUpdate;
 $('chatgpt_logout').onclick = async () => { await call('chatgpt_logout'); refresh(true); };
 
 $('start').onclick = async () => {
-	if (state && state.runner === 'paused') return call('resume');
+	if (state && (state.runner === 'paused' || state.runner === 'held')) return call('resume');
 	await call('save_settings', setupData()).catch(() => {});
 	await call('start'); toast('Starting the browser...');
 };
 $('pause').onclick = () => call(state && state.runner === 'paused' ? 'resume' : 'pause');
+$('takeover').onclick = async () => { await call('take_over'); toast('The agent stops after its current step. The browser is yours; click Continue when done.', 6000); };
+$('helpdone').onclick = async () => { await call('help_done'); showHelp(null); };
+
+let helpTimer = null;
+function showHelp(help) {
+	const bar = $('helpbar');
+	if (!help) { bar.hidden = true; clearInterval(helpTimer); helpTimer = null; return; }
+	$('helpreason').textContent = help.reason + (help.company ? ` (${help.company})` : '');
+	bar.hidden = false;
+}
+
+function beep() {  // three short tones, so a user in another window hears the agent needs them
+	try {
+		const ctx = new (window.AudioContext || window.webkitAudioContext)();
+		[0, 0.25, 0.5].forEach(t => {
+			const o = ctx.createOscillator(), g = ctx.createGain();
+			o.frequency.value = 880; o.connect(g); g.connect(ctx.destination);
+			g.gain.setValueAtTime(0.25, ctx.currentTime + t); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.2);
+			o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.21);
+		});
+		window.__beeps = (window.__beeps || 0) + 1;
+	} catch (e) { /* no audio device */ }
+}
+
+function startHelp(e) {
+	showHelp(e);
+	if (e.sound) beep();
+	let left = e.wait_s || 60;
+	clearInterval(helpTimer);
+	const tick = () => { $('helphint').textContent = left > 0 ? `In the browser tab, then click the button. If you are away, JobApply parks this job in ${left}s and goes on.` : 'Parked in Questions; the loop goes on.'; left--; };
+	tick(); helpTimer = setInterval(tick, 1000);
+}
+
 $('stop').onclick = () => call('stop');
 $('opencsv').onclick = () => call('open_csv');
 $('openhome').onclick = () => call('open_path', '');
@@ -292,10 +334,10 @@ function renderQuestions(qs) {
 	document.querySelectorAll('#qlist input[id^="a_"]').forEach(i => typed[i.id] = i.value);
 	const focused = document.activeElement && document.activeElement.id;
 	$('qlist').innerHTML = qs.length ? qs.map(q => {
-		const login = q.field_hint === 'login';
+		const login = q.field_hint === 'login' || q.field_hint === 'help';
 		const meta = `${esc([q.company, q.title].filter(Boolean).join(' - '))}${q.jobs > 1 ? ` (asked by ${q.jobs} jobs)` : ''} ${esc(q.asked_at)}`;
 		const act = login
-			? `<span class="hint" style="flex:1">Log in in that job's tab in the JobApply browser, then click Done.</span><button class="btn" data-done="${q.id}">Done</button>`
+			? `<span class="hint" style="flex:1">Do it in that job's tab in the JobApply browser (log in, solve the check, or finish it), then click Done.</span><button class="btn" data-done="${q.id}">Done</button>`
 			: `<input type="text" id="a_${q.id}" placeholder="Your answer" style="flex:1"><button class="btn" data-answer="${q.id}">Save answer</button><button class="btn ghost" data-done="${q.id}" title="Remove without saving an answer">Skip</button>`;
 		return `<div class="q"><div><b>${esc(q.question)}</b></div><div class="meta">${meta}</div><div class="row">${act}</div></div>`;
 	}).join('') : '<div class="empty">No open questions.</div>';
@@ -347,11 +389,13 @@ function renderState(st) {
 	const r = st.runner;
 	$('state').textContent = r; $('state').className = 'state ' + r;
 	$('today').textContent = st.today; $('cap').textContent = st.cap;
-	$('start').textContent = r === 'paused' ? 'Resume' : 'Start';
-	$('start').disabled = !(r === 'idle' || r === 'paused');
+	$('start').textContent = r === 'paused' || r === 'held' ? 'Continue' : 'Start';
+	$('start').disabled = !(r === 'idle' || r === 'paused' || r === 'held');
+	$('takeover').disabled = !(r === 'running' || r === 'starting');
 	$('pause').disabled = !(r === 'running' || r === 'paused' || r === 'starting');
 	$('pause').textContent = r === 'paused' ? 'Resume' : 'Pause';
 	$('stop').disabled = r === 'idle' || r === 'stopping';
+	showHelp(st.help);
 	const c = st.current || {};
 	$('current').textContent = c.phase === 'apply' ? `Applying: ${[c.title, c.company].filter(Boolean).join(' at ') || c.url}`
 		: c.phase === 'search' ? `Searching ${c.board}...` : '';
@@ -381,6 +425,8 @@ async function poll() {
 				if (e.kind === 'log') { text = e.text; cls = e.level; }
 				else if (e.kind === 'blocked') { text = `Guard held "${e.text}" for your review.`; cls = 'blocked'; }
 				else if (e.kind === 'question') text = `Question for you: ${e.question}`;
+				else if (e.kind === 'help') { startHelp(e); text = `Needs you: ${e.reason}`; cls = 'blocked'; }
+				else if (e.kind === 'help_end') showHelp(null);
 				else if (e.kind === 'update') {
 					if (e.stage === 'available') { showUpdate(e.version); text = `Version ${e.version} is available: Setup > Updates.`; }
 					else if (e.stage === 'download') $('updatestatus').textContent = e.total ? `Downloading ${Math.round(100 * e.done / e.total)}%` : 'Downloading...';

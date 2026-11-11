@@ -62,6 +62,20 @@ class Api:
 		with self._lock:
 			self._seq += 1
 			self._events.append({**event, 'seq': self._seq})
+		if event.get('kind') == 'help':
+			self._to_front()
+
+	def _to_front(self) -> None:
+		"""The agent needs the user: show the JobApply window over everything for a moment (the page plays a sound)."""
+		window = self._window
+		if window is None:
+			return
+		try:
+			window.restore()
+			window.on_top = True
+			threading.Timer(2.0, lambda: setattr(window, 'on_top', False)).start()
+		except Exception as e:  # a window being closed
+			logger.debug('could not raise the window: %s', e)
 
 	def events(self, since: int = 0) -> list[dict]:
 		with self._lock:
@@ -81,6 +95,7 @@ class Api:
 			'chatgpt': chatgpt_auth.status(),
 			'runner': self._runner.state if self._runner else 'idle',
 			'current': self._runner.current if self._runner else {},
+			'help': self._runner.help if self._runner else None,
 			'today': t.count_today(),
 			'cap': settings.daily_cap,
 			'questions': [dataclasses.asdict(q) for q in questions().open()],
@@ -255,6 +270,18 @@ class Api:
 	def resume(self) -> dict:
 		if self._runner:
 			self._runner.resume()
+		return {'ok': True}
+
+	def take_over(self) -> dict:
+		"""Stop the agent after its current step so the user can use the browser; resume() continues."""
+		if not (self._runner and self._runner.take_over()):
+			return {'error': 'Nothing is running.'}
+		return {'ok': True}
+
+	def help_done(self) -> dict:
+		"""The user did what the agent asked (captcha, login, code)."""
+		if self._runner:
+			self._runner.help_done()
 		return {'ok': True}
 
 	def stop(self) -> dict:
