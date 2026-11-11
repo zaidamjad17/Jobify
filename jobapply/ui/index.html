@@ -152,6 +152,9 @@
 			<div class="grid">
 				<label>Provider</label>
 				<select id="provider"><option value="gemini">Google Gemini (API key)</option><option value="openai">OpenAI (API key)</option><option value="chatgpt">Sign in with ChatGPT</option></select>
+				<label>Backup model</label>
+				<div><select id="backup_provider"><option value="">None</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option><option value="chatgpt">ChatGPT (signed in)</option></select>
+				<div class="hint">Used for a job when the main model stays busy (e.g. Google's "high demand" errors). Set up its key or sign-in below too.</div></div>
 				<div class="provider-fields" data-provider="gemini">
 					<label>Gemini model</label><input type="text" id="gemini_model">
 					<label>Gemini API key</label><input type="password" id="gemini_api_key" placeholder="saved: leave empty to keep">
@@ -220,7 +223,7 @@ function fillSetup(st) {
 	$('criteria_path').textContent = s.criteria_path || 'not set';
 	$('resume_template_path').textContent = s.resume_template_path || 'built-in';
 	$('browser_executable').textContent = s.browser_executable || 'Chrome or Edge (automatic)';
-	for (const k of ['cover_letter_tone', 'gemini_model', 'openai_model', 'daily_cap', 'provider']) $(k).value = s[k];
+	for (const k of ['cover_letter_tone', 'gemini_model', 'openai_model', 'daily_cap', 'provider', 'backup_provider']) $(k).value = s[k];
 	$('gemini_api_key').placeholder = s.gemini_api_key ? 'saved (leave empty to keep)' : 'not set';
 	$('openai_api_key').placeholder = s.openai_api_key ? 'saved (leave empty to keep)' : 'not set';
 	$('cg_model').value = s.chatgpt.model;
@@ -235,7 +238,7 @@ function fillSetup(st) {
 function setupData() {
 	const cg = {model: $('cg_model').value.trim()};
 	return {
-		cover_letter_tone: $('cover_letter_tone').value.trim(), provider: $('provider').value,
+		cover_letter_tone: $('cover_letter_tone').value.trim(), provider: $('provider').value, backup_provider: $('backup_provider').value,
 		gemini_model: $('gemini_model').value.trim(), gemini_api_key: $('gemini_api_key').value.trim(),
 		openai_model: $('openai_model').value.trim(), openai_api_key: $('openai_api_key').value.trim(),
 		chatgpt: cg, daily_cap: $('daily_cap').value, job_urls: $('job_urls').value,

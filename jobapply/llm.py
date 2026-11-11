@@ -12,15 +12,16 @@ class ModelSetupError(ValueError):
 	pass
 
 
-def agent_llm(settings: Settings) -> Any:
-	"""What browser_use.Agent(llm=...) takes."""
+def agent_llm(settings: Settings, provider: str | None = None) -> Any:
+	"""What browser_use.Agent(llm=...) takes, for settings.provider or the given one (the backup)."""
 	from browser_use import ChatGoogle, ChatOpenAI
 
-	if settings.provider == 'gemini':
+	provider = provider or settings.provider
+	if provider == 'gemini':
 		if not settings.gemini_api_key:
 			raise ModelSetupError('Add your Gemini API key in Setup (aistudio.google.com/apikey).')
 		return ChatGoogle(settings.gemini_model, api_key=settings.gemini_api_key)
-	if settings.provider == 'openai':
+	if provider == 'openai':
 		if not settings.openai_api_key:
 			raise ModelSetupError('Add your OpenAI API key in Setup (platform.openai.com/api-keys).')
 		return ChatOpenAI(settings.openai_model, api_key=settings.openai_api_key)

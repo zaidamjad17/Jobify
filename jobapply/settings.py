@@ -37,6 +37,7 @@ class Settings:
 	resume_template_path: str = ''  # '' = the built-in template
 	cover_letter_tone: str = 'professional, warm and concise (about 200 words)'
 	provider: str = 'gemini'
+	backup_provider: str = ''  # used when the main model is still busy after the retries ('' = none)
 	gemini_model: str = 'gemini-3.5-flash'
 	gemini_api_key: str = ''
 	openai_model: str = 'gpt-6-luna'
@@ -73,6 +74,10 @@ class Settings:
 	def validate(self) -> None:
 		if self.provider not in PROVIDERS:
 			raise ValueError(f'provider must be one of {", ".join(PROVIDERS)}, not {self.provider!r}')
+		if self.backup_provider not in ('', *PROVIDERS):
+			raise ValueError(f'backup_provider must be empty or one of {", ".join(PROVIDERS)}, not {self.backup_provider!r}')
+		if self.backup_provider == self.provider:
+			self.backup_provider = ''
 		if isinstance(self.daily_cap, bool) or not isinstance(self.daily_cap, int) or not 1 <= self.daily_cap <= 200:
 			raise ValueError(f'daily_cap must be a whole number from 1 to 200, not {self.daily_cap!r}')
 		unknown = [b for b in self.boards if b not in BOARDS]

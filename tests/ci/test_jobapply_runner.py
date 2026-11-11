@@ -690,3 +690,88 @@ def test_a_finished_job_lists_empty_required_fields_and_errors_and_keeps_a_scree
 	finally:
 		r.stop()
 		asyncio.run(r.close_browser())
+
+
+def test_a_busy_model_falls_back_to_the_backup_model(tmp_path, monkeypatch):
+	"""Live run: Google answered 503 for minutes, so every job failed. With a backup model set, a job whose model is
+	still busy after the retries runs on the backup instead."""
+	from pydantic_ai.exceptions import ModelHTTPError
+
+	chrome = find_chrome() or pytest.skip('Chrome not installed')
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	monkeypatch.setattr(runner_mod, 'RETRY_WAITS_S', (0.1,))
+	job = tmp_path / 'job.html'
+	job.write_text(JOB, encoding='utf-8')
+	(tmp_path / 'p.md').write_text(PROFILE, encoding='utf-8')
+	settings = Settings(
+		profile_path=str(tmp_path / 'p.md'),
+		criteria_path=str(tmp_path / 'p.md'),
+		gemini_api_key='k',
+		openai_api_key='o',
+		backup_provider='openai',
+		boards=[],
+		job_urls=[job.as_uri()],
+		browser_executable=chrome,
+	)
+
+	def busy(messages, info):
+		raise ModelHTTPError(503, 'gemini-x', {'error': {'code': 503, 'status': 'UNAVAILABLE'}})
+
+	backup, _ = script(_filled(job.as_uri()))
+	used = []
+
+	def llm(s, provider=None):
+		used.append(provider or s.provider)
+		return backup if provider == 'openai' else FunctionModel(busy)
+
+	monkeypatch.setattr(runner_mod, 'agent_llm', llm)
+	monkeypatch.setattr(runner_mod, 'writer_model', lambda m: None)
+	events = []
+	r = runner_mod.Runner(settings, events.append)
+	try:
+		r.start()
+		r._thread.join(120)
+		assert [row.status for row in runner_mod.tracker().rows()] == ['filled']
+		assert 'openai' in used and any('backup' in e.get('text', '') for e in events)
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())
+
+
+def test_a_browser_crash_mid_job_restarts_the_browser_and_runs_the_job_again(tmp_path, monkeypatch):
+	"""A crashed or closed browser failed the job. The app starts the browser again and retries that job once."""
+	from types import SimpleNamespace
+
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	(tmp_path / 'p.md').write_text(PROFILE, encoding='utf-8')
+	settings = Settings(
+		profile_path=str(tmp_path / 'p.md'),
+		criteria_path=str(tmp_path / 'p.md'),
+		gemini_api_key='k',
+		boards=[],
+		job_urls=['https://jobs.lever.co/acme/1'],
+	)
+	monkeypatch.setattr(runner_mod, 'agent_llm', lambda s, provider=None: None)
+	monkeypatch.setattr(runner_mod, 'writer_model', lambda m: None)
+	r = runner_mod.Runner(settings, lambda e: None)
+	starts, runs = [], []
+
+	async def start_browser():
+		starts.append(1)
+
+	async def run_agent(task, schema, tools, max_steps, timeout):
+		runs.append(task)
+		if len(runs) == 1:
+			return SimpleNamespace(status='error', error='The browser is gone: chrome.exe exited', structured_output=None)
+		return SimpleNamespace(
+			status='completed', error=None, structured_output=runner_mod.JobOutcome(status='filled', company='Acme')
+		)
+
+	monkeypatch.setattr(r, '_start_browser', start_browser)
+	monkeypatch.setattr(r, '_run_agent', run_agent)
+	monkeypatch.setattr(r, '_open_tab', lambda url: 'T1')
+	monkeypatch.setattr(r, '_finish_checks', lambda *a, **k: {}, raising=False)
+	r.start()
+	r._thread.join(30)
+	assert len(runs) == 2 and len(starts) >= 3  # loop start, the job, the restart
+	assert [row.status for row in runner_mod.tracker().rows()] == ['filled']

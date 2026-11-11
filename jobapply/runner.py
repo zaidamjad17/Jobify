@@ -36,6 +36,10 @@ RETRY_WAITS_S = (20.0, 60.0)
 BUSY = re.compile(
 	r'ModelUnavailableError|ModelRateLimitError|ModelServerError|ModelConnectionError|\b(429|500|502|503|504)\b|overloaded|high demand|RESOURCE_EXHAUSTED|UNAVAILABLE'
 )
+# The browser crashed or was closed under a running job: start it again and run the job once more
+CRASHED = re.compile(
+	r'browser is gone|browser\b.{0,40}\b(exited|crashed|closed)|no close frame|DevTools port|ConnectionClosed', re.I
+)
 SEARCH_MAX_STEPS, SEARCH_TIMEOUT_S = 40, 600
 SEARCH_BATCH = 10
 MAX_EMPTY_ROUNDS = 3  # a board is dropped after this many rounds in a row without a new job
@@ -360,45 +364,57 @@ class Runner:
 				_daemon_cdp(self.browser.name, 'Target.closeTarget', targetId=t)
 
 	async def _run_agent(self, task: str, schema: Any, tools: Any, max_steps: int, timeout: float) -> Any:
+		"""Run the agent on the current tab: retried while the model is busy, then on the backup model if one is set.
+		Raises Interrupted for take_over() and the stuck watch."""
 		from browser_use import Agent
 
 		profile = read_text(self.settings.profile_path, 'profile')  # read per job: answers saved meanwhile count
 		criteria = read_text(self.settings.criteria_path, 'job criteria')
-		agent = Agent(
-			task,
-			llm=agent_llm(self.settings),
-			browser=self.browser,
-			tools=tools,
-			output_model_schema=schema,
-			extend_system_message=build_rules(profile, criteria),
-			workspace=sub('workspace'),
-		)
 		watch = StepWatch(self._stuck)
 		steps = logging.getLogger('browser_use.agent.loop')
 		if steps.getEffectiveLevel() > logging.INFO:
 			steps.setLevel(logging.INFO)
 		steps.addHandler(watch)
 		self._interrupt = None
+		backup = self.settings.backup_provider
+		plan: list[tuple[str | None, float | None]] = [(None, w) for w in RETRY_WAITS_S] + [(None, None)]
+		if backup:
+			plan.append((backup, None))
 		try:
-			for wait in (*RETRY_WAITS_S, None):
-				self._agent_task = asyncio.ensure_future(agent.run(max_steps=max_steps, timeout=timeout))
+			result = None
+			for provider, wait in plan:
+				if provider:
+					self._log(f'The AI model is still busy; using the backup model ({provider}) for this job.', 'error')
+				agent = Agent(
+					task,
+					llm=agent_llm(self.settings, provider) if provider else agent_llm(self.settings),
+					browser=self.browser,
+					tools=tools,
+					output_model_schema=schema,
+					extend_system_message=build_rules(profile, criteria),
+					workspace=sub('workspace'),
+				)
 				try:
-					result = await self._agent_task
-				except asyncio.CancelledError:
-					if self._interrupt:  # take_over() or the stuck watch, not a stop
-						raise Interrupted(self._interrupt) from None
-					raise
+					self._agent_task = asyncio.ensure_future(agent.run(max_steps=max_steps, timeout=timeout))
+					try:
+						result = await self._agent_task
+					except asyncio.CancelledError:
+						if self._interrupt:  # take_over() or the stuck watch, not a stop
+							raise Interrupted(self._interrupt) from None
+						raise
+					finally:
+						self._agent_task = None
 				finally:
-					self._agent_task = None
-				if wait is None or result.status != 'error' or not BUSY.search(result.error or ''):
+					with contextlib.suppress(Exception):
+						await agent.close()
+				if result.status != 'error' or not BUSY.search(result.error or ''):
 					return result
-				self._log(f'The AI model is busy; trying again in {wait:g}s.', 'error')
-				await asyncio.sleep(wait)
-			raise AssertionError('unreachable')
+				if wait is not None:
+					self._log(f'The AI model is busy; trying again in {wait:g}s.', 'error')
+					await asyncio.sleep(wait)
+			return result
 		finally:
 			steps.removeHandler(watch)
-			with contextlib.suppress(Exception):
-				await agent.close()
 
 	def _stuck(self, step: str) -> None:
 		self._log(f'The agent is repeating itself ("{step[:80]}"); parking this job.', 'error')
@@ -554,8 +570,17 @@ class Runner:
 		outcome: JobOutcome | None = None
 		error = ''
 		try:
-			result = await self._run_agent(APPLY_TASK.replace('{url}', url), JobOutcome, tools, APPLY_MAX_STEPS, APPLY_TIMEOUT_S)
-			outcome = result.structured_output
+			for attempt in (1, 2):
+				result = await self._run_agent(
+					APPLY_TASK.replace('{url}', url), JobOutcome, tools, APPLY_MAX_STEPS, APPLY_TIMEOUT_S
+				)
+				outcome = result.structured_output
+				if outcome is not None or attempt == 2 or not CRASHED.search(result.error or ''):
+					break
+				self._log('The browser closed or crashed; starting it again and retrying this job.', 'error')
+				await self._start_browser()
+				mark = self.guard.mark() if self.guard else 0
+				tab = await asyncio.to_thread(self._open_tab, url)
 			if outcome is None:
 				error = result.error or f'the agent stopped ({result.status}) before it finished'
 		except Interrupted as e:
