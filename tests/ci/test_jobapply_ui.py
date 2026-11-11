@@ -227,7 +227,7 @@ def test_job_links_are_pasted_on_the_run_tab_and_show_their_status(chrome):
 	try:
 		assert ev('document.querySelectorAll("#links .link").length') == 2
 		assert 'applying now' in ev('document.getElementById("links").innerText')
-		assert ev('document.getElementById("linkcount").textContent') == '1 waiting, 1 done'
+		assert ev('document.getElementById("linkcount").textContent') == '1 waiting, 0 done'  # the one being applied to is neither
 		ev('document.getElementById("linkinput").value = "https://boards.greenhouse.io/x/jobs/9"')
 		ev('document.getElementById("applylinks").click()')
 		ev('document.querySelector("[data-unlink]").click()')
