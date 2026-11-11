@@ -1,4 +1,4 @@
-"""The JobApply loop end to end on a local headless Chrome, with scripted models (no provider calls).
+"""The Jobify loop end to end on a local headless Chrome, with scripted models (no provider calls).
 
 One pasted job: the agent writes the documents, sends a question, tries to press Submit (the guard holds it), and
 finishes. The row is logged as needs_input, the PDFs exist, the question is open, and the tab is unlocked for the user."""
@@ -678,7 +678,7 @@ CHECK_FORM = """<!doctype html><html><body><form>
 
 def test_a_finished_job_lists_empty_required_fields_and_errors_and_keeps_a_screenshot(tmp_path, monkeypatch):
 	"""Final check: History says whether the form is really ready (required fields still empty, error messages on the
-	page) and keeps a screenshot of the form as JobApply left it."""
+	page) and keeps a screenshot of the form as Jobify left it."""
 	r, urls, seen, events, profile = _runner_with(tmp_path, monkeypatch, {'form.html': CHECK_FORM}, _filled('x'))
 	try:
 		r.start()
@@ -900,3 +900,46 @@ def test_take_over_during_a_search_holds_the_loop_instead_of_ending_it(tmp_path,
 	finally:
 		r.stop()
 		asyncio.run(r.close_browser())
+
+
+def test_job_links_added_while_running_are_applied_next_and_links_only_skips_the_boards(tmp_path, monkeypatch):
+	"""User request: add job links and have Jobify apply to them, also while it runs. 'Apply to these' (links_only)
+	applies to the links alone: no board search, even with boards selected."""
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	(tmp_path / 'p.md').write_text(PROFILE, encoding='utf-8')
+	runner_mod.tracker().add(runner_mod.Row(url='https://x.example/done', status='filled'))
+	settings = Settings(
+		profile_path=str(tmp_path / 'p.md'),
+		criteria_path=str(tmp_path / 'p.md'),
+		gemini_api_key='k',
+		boards=['linkedin'],
+		job_urls=['https://x.example/1', 'https://x.example/done', 'https://x.example/removed'],
+	)
+	events, applied, searched = [], [], []
+	r = runner_mod.Runner(settings, events.append)
+
+	async def apply(job, llm, writer):
+		applied.append(job['url'])
+		if len(applied) == 1:  # the user adds one link and removes another while the first job runs
+			r.add_links(['https://x.example/2', 'https://x.example/1'])
+			r.remove_link('https://x.example/removed/')
+		r.tracker.add(runner_mod.Row(url=job['url'], status='filled'))
+
+	async def search(board, llm, round_):
+		searched.append(board)
+		return []
+
+	async def no_hold():
+		return False
+
+	monkeypatch.setattr(r, '_start_browser', lambda: asyncio.sleep(0))
+	monkeypatch.setattr(r, '_apply', apply)
+	monkeypatch.setattr(r, '_search', search)
+	monkeypatch.setattr(r, '_hold_for_review', no_hold)
+	monkeypatch.setattr(runner_mod, 'agent_llm', lambda s: None)
+	monkeypatch.setattr(runner_mod, 'writer_model', lambda llm: None)
+	r.start(links_only=True)
+	r._thread.join(30)
+	assert applied == ['https://x.example/1', 'https://x.example/2'], [e for e in events if e['kind'] == 'log']
+	assert searched == []
+	assert any(e.get('text') == 'Done with your job links.' for e in events)

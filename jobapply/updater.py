@@ -1,10 +1,10 @@
 """Updates from inside the app: new versions are GitHub releases tagged jobapply-v<version> with the Windows installer
-(JobApply-Setup-<version>.exe) attached; .github/workflows/jobapply-windows.yml publishes one when jobapply/__init__.py
+(Jobify-Setup-<version>.exe) attached; .github/workflows/jobapply-windows.yml publishes one when jobapply/__init__.py
 gets a new __version__ on main.
 
 check() finds the newest release above the running version, download() fetches its installer (checked against the
 SHA-256 GitHub lists for the asset), and install() starts it silently and lets the app close: the installer replaces
-the program files, keeps the data folder (%APPDATA%\\JobApply) and starts the new version."""
+the program files, keeps the data folder (paths.app_home()) and starts the new version."""
 
 from __future__ import annotations
 
@@ -96,7 +96,7 @@ def check(current: str = __version__, repo: str = REPO, client: httpx.Client | N
 def download(release: Release, progress: Callable[[int, int], Any] | None = None, client: httpx.Client | None = None) -> Path:
 	"""The installer in the app's updates folder, after its size and SHA-256 matched what GitHub lists."""
 	folder = sub('updates')
-	name = re.sub(r'[^\w.\-]+', '_', release.name) or 'JobApply-Setup.exe'
+	name = re.sub(r'[^\w.\-]+', '_', release.name) or 'Jobify-Setup.exe'
 	target = folder / name
 	partial = target.with_suffix('.part')
 	own = client is None
@@ -130,7 +130,7 @@ def download(release: Release, progress: Callable[[int, int], Any] | None = None
 
 def install(installer: Path, popen: Callable[..., Any] = subprocess.Popen) -> None:
 	"""Start the installer silently; the caller then closes the app. Inno Setup closes what is still running, replaces
-	the program files, keeps %APPDATA%\\JobApply, and starts the new version."""
+	the program files, keeps the data folder, and starts the new version."""
 	if sys.platform != 'win32' and popen is subprocess.Popen:
 		raise UpdateError('Updating from the app works on Windows; on this system install the new version by hand.')
 	args = [str(installer), '/SILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/CLOSEAPPLICATIONS']

@@ -1,8 +1,8 @@
-"""CI check for the packaged app: run inside JobApply.exe (`JobApply.exe -c "..."`), an Agent with a scripted model drives
+"""CI check for the packaged app: run inside Jobify.exe (`Jobify.exe -c "..."`), an Agent with a scripted model drives
 a local headless browser. The REPL worker and the browser-harness daemon are started through the exe itself
 (jobapply/frozen.py), so this fails when the bundle misses a module or package metadata they need.
 
-Usage: JobApply.exe -c "import runpy, sys; sys.argv = ['smoke', r'<chrome.exe>']; runpy.run_path(r'<this file>', run_name='__main__')"
+Usage: Jobify.exe -c "import runpy, sys; sys.argv = ['smoke', r'<chrome.exe>']; runpy.run_path(r'<this file>', run_name='__main__')"
 """
 
 import asyncio

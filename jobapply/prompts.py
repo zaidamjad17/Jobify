@@ -62,7 +62,7 @@ submit.
      https://mail.google.com/mail/?view=cm&fs=1&to=<address>&su=<email_subject> , wait for the compose window, write a
      short email body (the cover letter text works), attach the resume PDF and cover letter PDF with
      upload_file('input[type=file]', path) and verify both attachments show, and leave the draft open without sending.
-     Status "email_drafted". If Gmail asks you to sign in: need_human('Log in to Gmail in the JobApply browser',
+     Status "email_drafted". If Gmail asks you to sign in: need_human('Log in to Gmail in the Jobify browser',
      'login').
 4. Scroll through the final page and check that the required fields are filled. Status "needs_input" when any
    required field is still empty because of a question you sent to ask_user, or a login is needed.

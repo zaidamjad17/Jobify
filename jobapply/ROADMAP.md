@@ -1,4 +1,4 @@
-# JobApply roadmap
+# Jobify roadmap
 
 Goal: an MVP that **finishes applications** reliably, then one people can buy.
 
@@ -13,8 +13,8 @@ or forms the agent could not open. Everything here attacks that.
 
 | # | Idea | Why it matters | Status |
 |---|---|---|---|
-| 1.1 | **Resume import + setup interview.** Drop in a resume (PDF/DOCX); JobApply writes `profile.md` from it, then asks the ~15 questions every form asks (salary range, notice period, visa, languages, "a project you're proud of", "where in 2 years"…) once, in the app. | Most of the run's stuck questions never happen. New users are set up in 5 minutes instead of writing markdown. | ⬜ |
-| 1.2 | **Human-help handoff with sound.** When the agent hits a captcha, "verify you're human", a login wall or a 2FA code, it doesn't skip the job: it pauses it, brings that tab to the front, plays a sound and shows a Windows notification ("JobApply needs you: captcha on Teradata"), and offers an **I did it — continue** button. The agent then picks up where it stopped. No answer within 60 s: the job is parked in Questions (Done sends the agent back) and the loop goes on. **Take over** stops the agent after its current step so the user has the browser; **Continue** finishes that job first. | Captchas and logins are today's silent failures. A 10-second human click saves the whole application. | ✅ 0.3.0 |
+| 1.1 | **Resume import + setup interview.** Drop in a resume (PDF/DOCX); Jobify writes `profile.md` from it, then asks the ~15 questions every form asks (salary range, notice period, visa, languages, "a project you're proud of", "where in 2 years"…) once, in the app. | Most of the run's stuck questions never happen. New users are set up in 5 minutes instead of writing markdown. | ⬜ |
+| 1.2 | **Human-help handoff with sound.** When the agent hits a captcha, "verify you're human", a login wall or a 2FA code, it doesn't skip the job: it pauses it, brings that tab to the front, plays a sound and shows a Windows notification ("Jobify needs you: captcha on Teradata"), and offers an **I did it — continue** button. The agent then picks up where it stopped. No answer within 60 s: the job is parked in Questions (Done sends the agent back) and the loop goes on. **Take over** stops the agent after its current step so the user has the browser; **Continue** finishes that job first. | Captchas and logins are today's silent failures. A 10-second human click saves the whole application. | ✅ 0.3.0 |
 | 1.3 | **Pre-flight check before searching.** On Start, open each selected board and Gmail, detect "not logged in" / captcha / "unusual traffic", and ask for help (with the 1.2 notification) before the loop begins. | No more "nothing new" from a board that was really blocked. Problems surface once, up front. | ✅ 0.3.0 |
 | 1.4 | **Answer bank.** Every answer the user gives goes into a searchable list in the app (edit, delete, reuse). Reworded questions ("why this track?" ≈ "why AI engineering?") match the same answer. | Fewer questions per job; answers improve over time instead of piling up in `profile.md`. | ⬜ |
 | 1.5 | **Match score before applying.** Score each found job 0–100 against the profile and criteria, with reasons ("needs 5+ yrs", "US only"). Skip below a threshold *before* writing documents or opening the form. Show the score in History. | 7 of 14 jobs were skipped only after work was spent on them. Cheaper, faster, and the score itself is a selling point. | ⬜ |
@@ -43,7 +43,7 @@ or forms the agent could not open. Everything here attacks that.
 | 2.18 | **Referral hint**: LinkedIn connections at the company. | Referrals beat cold applications. | ⬜ |
 | 2.19 | **Interview prep pack** when a reply comes in (company, likely questions from the job and resume). | Value after applying; retention. | ⬜ |
 | 2.4 | **Cost meter.** AI cost per job and per day, with a daily budget cap that pauses the loop. | Trust; nobody wants a surprise bill. | ⬜ |
-| 2.5 | **Reply tracking.** Read Gmail (with permission) for replies from companies applied to: interview / rejection / assessment, and update the job's status. | Turns JobApply into the user's whole job-search tracker. Strong retention. | ⬜ |
+| 2.5 | **Reply tracking.** Read Gmail (with permission) for replies from companies applied to: interview / rejection / assessment, and update the job's status. | Turns Jobify into the user's whole job-search tracker. Strong retention. | ⬜ |
 | 2.6 | **Several resume variants** (e.g. "Backend", "AI/ML"): the match picks the closest as the base for tailoring. | Better documents for people targeting two kinds of roles. | ⬜ |
 | 2.7 | **Scheduled runs** ("every weekday at 9:00, up to 20 jobs") with the 1.2 notification when it needs you. | Set and forget. | ⬜ |
 | 2.8 | **One-click support bundle**: zip of logs and settings (keys removed) to send when something breaks. | Needed once there are users. | ⬜ |

@@ -1,4 +1,4 @@
-# PyInstaller spec for JobApply.exe (one folder, windowed). Build from the repo root:
+# PyInstaller spec for Jobify.exe (one folder, windowed). Build from the repo root:
 #   uv sync --locked --group jobapply
 #   uv run --with pyinstaller==6.22.3 pyinstaller packaging/windows/jobapply.spec --noconfirm
 # The exe also runs the helper processes browser-use starts with sys.executable (jobapply/frozen.py), so every module
@@ -39,8 +39,9 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='JobApply',
+    name='Jobify',
+    icon=SPECPATH + '/jobify.ico',
     console=False,
     upx=False,
 )
-coll = COLLECT(exe, a.binaries, a.datas, name='JobApply', upx=False)
+coll = COLLECT(exe, a.binaries, a.datas, name='Jobify', upx=False)

@@ -48,7 +48,7 @@ GUARD_JS = r"""
 		if (now - state.toast < 1500 || !document.body) return;
 		state.toast = now;
 		const box = document.createElement('div');
-		box.textContent = 'JobApply: "' + (text || 'Submit') + '" is left for you. Review this tab, then press it yourself.';
+		box.textContent = 'Jobify: "' + (text || 'Submit') + '" is left for you. Review this tab, then press it yourself.';
 		box.style.cssText = 'position:fixed;z-index:2147483647;left:50%;bottom:16px;pointer-events:none;transform:translateX(-50%);background:#12304d;' +
 			'color:#fff;font:14px/1.4 Segoe UI,Arial,sans-serif;padding:10px 16px;border-radius:8px;box-shadow:0 4px 16px #0005;max-width:80vw';
 		document.body.appendChild(box);
