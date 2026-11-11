@@ -601,8 +601,11 @@ class Runner:
 		try:
 			result = await self._run_agent(task, FoundJobs, tools, SEARCH_MAX_STEPS, SEARCH_TIMEOUT_S)
 		except Interrupted as e:  # Take over (or stuck) during a search: no jobs from this round; the loop goes on
-			self._log(f'{label}: search paused.' if e.reason == 'hold' else f'{label}: the search got stuck; moving on.', 'error')
-			return None
+			if e.reason == 'hold':
+				self._log(f'{label}: search paused; it runs again after Continue.', 'error')
+				return None  # searched again: the user interrupted it
+			self._log(f'{label}: the search got stuck on this page; moving on.', 'error')
+			return []  # counts as an empty round, so a page that always sticks is not retried forever
 		finally:
 			if self.guard:  # search tabs are not for review
 				await asyncio.to_thread(self._close_tabs, self.guard.tabs_since(mark))
