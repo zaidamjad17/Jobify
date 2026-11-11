@@ -519,3 +519,39 @@ def test_job_links_are_found_in_pasted_text_and_added_once(home):
 	api.add_job_links('https://jobs.lever.co/acme/3')
 	api.remove_job_link('https://jobs.lever.co/acme/3/')
 	assert Settings.load().job_urls == []
+
+
+def test_update_check_works_when_the_github_api_answers_403():
+	"""User report: "Check for updates" said GitHub answered 403 (the API's hourly limit per internet address, shared
+	on a mobile network or VPN). The check falls back to the release pages on github.com, which have no such limit."""
+	import httpx
+
+	from jobapply import updater
+
+	repo = '/zaidamjad17/Jobify'
+
+	def site(latest_tag: str | None):
+		def handler(request: httpx.Request) -> httpx.Response:
+			path = request.url.path
+			if path.startswith('/repos/'):
+				return httpx.Response(403, json={'message': 'API rate limit exceeded'})
+			if path == f'{repo}/releases/latest':
+				if latest_tag is None:
+					return httpx.Response(404)
+				return httpx.Response(302, headers={'Location': f'https://github.com{repo}/releases/tag/{latest_tag}'})
+			if path.startswith(f'{repo}/releases/tag/'):
+				return httpx.Response(200, text='<html>release</html>')
+			if path == f'{repo}/releases/expanded_assets/{latest_tag}':
+				return httpx.Response(
+					200, text=f'<a href="{repo}/releases/download/{latest_tag}/Jobify-Setup-0.4.0.exe">Jobify-Setup-0.4.0.exe</a>'
+				)
+			return httpx.Response(404)
+
+		return httpx.Client(transport=httpx.MockTransport(handler))
+
+	found = updater.check('0.3.0', client=site('jobapply-v0.4.0'))
+	assert found is not None and (found.version, found.name) == ('0.4.0', 'Jobify-Setup-0.4.0.exe')
+	assert found.url == f'https://github.com{repo}/releases/download/jobapply-v0.4.0/Jobify-Setup-0.4.0.exe'
+	assert updater.check('0.4.0', client=site('jobapply-v0.4.0')) is None
+	with pytest.raises(updater.UpdateError, match='releases/latest'):
+		updater.check('0.3.0', client=site(None))
