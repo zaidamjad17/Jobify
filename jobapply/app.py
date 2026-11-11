@@ -527,9 +527,32 @@ def main() -> None:
 	api._window = window
 	assert window is not None
 	window.events.closed += api.shutdown
-	# icon: the window/taskbar icon on Linux and macOS; on Windows the window takes Jobify.exe's icon (jobify.ico)
-	webview.start(api._check_update_in_background, icon=str(resource('ui/logo.png')))  # runs once the window is up
+	# The window/taskbar icon on Linux and macOS. Not on Windows: pywebview loads it there with .NET Icon(path), which
+	# only reads .ico and crashed the window before it opened; the window takes Jobify.exe's icon (jobify.ico) instead.
+	icon = None if sys.platform == 'win32' else str(resource('ui/logo.png'))
+	webview.start(api._check_update_in_background, icon=icon)  # runs once the window is up
+
+
+def show_startup_error(error: BaseException) -> None:
+	"""The windowed exe has no console: a crash before the window opens would be silent. Log it and say so."""
+	logger.exception('Jobify could not start')
+	text = f'Jobify could not start:\n\n{error}\n\nDetails are in {app_home() / "jobapply.log"}'
+	if sys.platform == 'win32':
+		with contextlib.suppress(Exception):
+			import ctypes
+
+			ctypes.windll.user32.MessageBoxW(None, text, 'Jobify', 0x10)  # type: ignore[attr-defined]
+
+
+def run() -> None:
+	try:
+		main()
+	except SystemExit:
+		raise
+	except BaseException as e:
+		show_startup_error(e)
+		raise
 
 
 if __name__ == '__main__':
-	main()
+	run()

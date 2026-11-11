@@ -555,3 +555,31 @@ def test_update_check_works_when_the_github_api_answers_403():
 	assert updater.check('0.4.0', client=site('jobapply-v0.4.0')) is None
 	with pytest.raises(updater.UpdateError, match='releases/latest'):
 		updater.check('0.3.0', client=site(None))
+
+
+def test_the_window_opens_on_windows_without_a_png_icon(home, monkeypatch):
+	"""User report: after the update to 0.4.1 Jobify did not open at all. pywebview's Windows backend loads the icon
+	with .NET Icon(path), which only reads .ico, and the PNG logo crashed the window before it showed. Windows gets no
+	icon argument (the window uses Jobify.exe's icon); other systems get the PNG."""
+	import sys
+	import types
+
+	from jobapply import app
+
+	started = []
+
+	class Event:
+		def __iadd__(self, handler):
+			return self
+
+	fake = types.SimpleNamespace(
+		create_window=lambda *a, **k: types.SimpleNamespace(events=types.SimpleNamespace(closed=Event())),
+		start=lambda func=None, **kw: started.append(kw),
+	)
+	monkeypatch.setitem(sys.modules, 'webview', fake)
+	monkeypatch.setattr(app, 'setup_logging', lambda: None)
+	for platform, icon in (('win32', None), ('linux', str(app.resource('ui/logo.png')))):
+		monkeypatch.setattr(app.sys, 'platform', platform)
+		app.main()
+		assert started[-1]['icon'] == icon
+	assert app.resource('ui/logo.png').is_file()
