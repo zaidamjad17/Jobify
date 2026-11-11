@@ -200,6 +200,9 @@ class Runner:
 		self._refills: deque[str] = deque()  # jobs to finish with the user's answers, before any new job
 		self._refills_lock = threading.Lock()
 		self._refill_only = False
+		self._links: deque[str] = deque()  # job links the user added, applied to before any board search
+		self._links_lock = threading.Lock()
+		self._links_only = False
 		self._agent_task: asyncio.Task | None = None  # the agent run in progress (take_over / stuck cancel it)
 		self._interrupt: str | None = None  # why it was cancelled: 'hold' or 'stuck'
 		self._help_done = threading.Event()  # the user clicked "I did it, continue" on a handoff
@@ -207,13 +210,15 @@ class Runner:
 
 	# control (any thread)
 
-	def start(self, refill_only: bool = False) -> None:
-		"""refill_only: only finish the jobs in request_refill(), then stop (no new jobs)."""
+	def start(self, refill_only: bool = False, links_only: bool = False) -> None:
+		"""refill_only: only finish the jobs in request_refill(), then stop (no new jobs). links_only: apply to the
+		user's job links (settings.job_urls and add_links()), then stop (no board search)."""
 		if self._thread and self._thread.is_alive():
 			if self.state == 'paused':
 				self.resume()
 			return
 		self._refill_only = refill_only
+		self._links_only = links_only
 		self._stop = False
 		self._resume.set()
 		self._thread = threading.Thread(target=self._main, daemon=True, name='jobapply-runner')
@@ -228,6 +233,24 @@ class Runner:
 	def _next_refill(self) -> str | None:
 		with self._refills_lock:
 			return self._refills.popleft() if self._refills else None
+
+	def add_links(self, urls: list[str]) -> None:
+		"""Job links to apply to next (before any board search), also while the loop runs."""
+		with self._links_lock:
+			keys = {job_key(u) for u in self._links}
+			for url in urls:
+				if job_key(url) not in keys:
+					keys.add(job_key(url))
+					self._links.append(url)
+
+	def remove_link(self, url: str) -> None:
+		with self._links_lock:
+			key = job_key(url)
+			self._links = deque(u for u in self._links if job_key(u) != key)
+
+	def _next_link(self) -> str | None:
+		with self._links_lock:
+			return self._links.popleft() if self._links else None
 
 	def pause(self) -> None:
 		"""Finishes the current job, then waits."""
@@ -305,8 +328,10 @@ class Runner:
 		read_text(s.criteria_path, 'job criteria')
 		await self._start_browser()
 		self._set_state('running' if self._resume.is_set() else 'paused')
-		queue: deque[dict] = deque() if self._refill_only else deque({'url': u, 'board': ''} for u in s.job_urls)
-		boards = [b for b in s.boards if b in BOARDS]
+		queue: deque[dict] = deque()
+		if not self._refill_only:
+			self.add_links(s.job_urls)
+		boards = [] if self._links_only else [b for b in s.boards if b in BOARDS]
 		if boards and not self._refill_only:
 			blocked = await self._preflight(boards)
 			boards = [b for b in boards if b not in blocked]
@@ -325,13 +350,25 @@ class Runner:
 			if self.tracker.count_today() >= s.daily_cap:
 				self._log(f'Daily limit reached ({s.daily_cap} jobs). Review your open tabs; the count resets at midnight.')
 				break
+			with self._links_lock:
+				has_link = bool(self._links)
+			if has_link:  # the user's own links first, also ones added while the loop runs
+				if await self._hold_for_review():
+					continue
+				link = self._next_link()
+				if link and not self.tracker.seen(link):
+					await self._apply({'url': link, 'board': ''}, llm, writer)
+				continue
 			if not queue:
 				live = [b for b in boards if empty[b] < MAX_EMPTY_ROUNDS and rounds[b] < MAX_ROUNDS]
 				if not live:
-					self._log(
-						'No more new jobs matching your criteria on the selected boards (each was searched several result '
-						'pages deep). Widen the criteria, select more boards, or paste job URLs in Setup, then Start again.'
-					)
+					if not boards:  # links only (or no board selected): the user's links are done
+						self._log('Done with your job links.')
+					else:
+						self._log(
+							'No more new jobs matching your criteria on the selected boards (each was searched several '
+							'result pages deep). Widen the criteria, select more boards, or add job links on the Run tab.'
+						)
 					break
 				board = live[board_index % len(live)]
 				board_index += 1

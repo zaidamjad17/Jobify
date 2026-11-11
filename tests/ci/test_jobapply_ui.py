@@ -69,6 +69,10 @@ STATE = {
 		},
 	],
 	'home': 'h',
+	'links': [
+		{'url': 'https://jobs.lever.co/acme/1', 'status': 'applying'},
+		{'url': 'https://jobs.lever.co/acme/2', 'status': 'waiting'},
+	],
 	'questions': [
 		{
 			'id': 'q1',
@@ -212,6 +216,26 @@ def test_setup_shows_profile_completeness_and_history_says_why_jobs_are_not_fini
 		assert '1 need you' in ev('document.getElementById("rowsummary").innerText')
 		assert '1 skipped' in ev('document.getElementById("rowsummary").innerText')
 		assert 'waiting on a question for you' in ev('document.getElementById("whybox").innerText')
+	finally:
+		cdp.send('Target.closeTarget', targetId=target)
+		cdp.close()
+
+
+def test_job_links_are_pasted_on_the_run_tab_and_show_their_status(chrome):
+	"""User request: add job links in the app and have them applied to. The Run tab lists each link with its status."""
+	cdp, session, target, ev = _page(chrome)
+	try:
+		assert ev('document.querySelectorAll("#links .link").length') == 2
+		assert 'applying now' in ev('document.getElementById("links").innerText')
+		assert ev('document.getElementById("linkcount").textContent') == '1 waiting, 1 done'
+		ev('document.getElementById("linkinput").value = "https://boards.greenhouse.io/x/jobs/9"')
+		ev('document.getElementById("applylinks").click()')
+		ev('document.querySelector("[data-unlink]").click()')
+		time.sleep(0.3)
+		calls = ev('window.__calls')
+		assert ['add_job_links', 'https://boards.greenhouse.io/x/jobs/9', True] in calls
+		assert ['remove_job_link', 'https://jobs.lever.co/acme/1'] in calls
+		assert ev('document.getElementById("linkinput").value') == ''
 	finally:
 		cdp.send('Target.closeTarget', targetId=target)
 		cdp.close()

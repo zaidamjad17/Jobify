@@ -496,3 +496,26 @@ def test_freshest_jobs_come_first_and_old_ones_are_dropped():
 
 	jobs = [{'url': 'a', 'days': 10}, {'url': 'b', 'days': 1}, {'url': 'c', 'days': None}, {'url': 'd', 'days': 40}]
 	assert [j['url'] for j in freshest_first(jobs, max_age_days=14)] == ['b', 'a', 'c']
+
+
+def test_job_links_are_found_in_pasted_text_and_added_once(home):
+	"""User request: paste job links (a list, or a message with links in it) and Jobify applies to them."""
+	from jobapply import app
+
+	text = 'Look at https://jobs.lever.co/acme/1, and\nwww.example.com/jobs/2\n\nhttps://jobs.lever.co/acme/1/ (same)\nno link'
+	assert app.parse_links(text) == ['https://jobs.lever.co/acme/1', 'https://www.example.com/jobs/2']
+
+	app.tracker().add(Row(url='https://www.example.com/jobs/2', status='filled'))
+	api = app.Api()
+	assert api.add_job_links('nothing here')['error'].startswith('No job links')
+	r = api.add_job_links(text)
+	assert (r['added'], r['already_done']) == (1, 1)
+	assert api.add_job_links('https://jobs.lever.co/acme/1')['duplicates'] == 1
+	assert [link['status'] for link in api.state()['links']] == ['waiting']
+	app.tracker().add(Row(url='https://jobs.lever.co/acme/1', status='needs_input'))
+	assert api.state()['links'] == [{'url': 'https://jobs.lever.co/acme/1', 'status': 'needs_input'}]
+	api.clear_finished_links()
+	assert api.state()['links'] == []
+	api.add_job_links('https://jobs.lever.co/acme/3')
+	api.remove_job_link('https://jobs.lever.co/acme/3/')
+	assert Settings.load().job_urls == []

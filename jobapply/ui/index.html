@@ -76,6 +76,12 @@
 	.checkwarn { color: var(--warn); font-size: 12.5px; margin-top: 3px; }
 	.provider-fields { display: none; } .provider-fields.on { display: contents; }
 	.current { font-size: 15px; }
+	.links { margin-top: 10px; }
+	.links .link { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }
+	.links .link a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); text-decoration: none; }
+	.pill.waiting { color: var(--muted); } .pill.applying { color: var(--accent); font-weight: 600; }
+	.x { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 6px; border-radius: 4px; }
+	.x:hover { background: var(--chip); color: var(--bad); }
 </style>
 </head>
 <body>
@@ -108,6 +114,18 @@
 				<span class="current" id="current"></span>
 			</div>
 			<div class="hint">It fills one job per tab and never presses Submit or Send. Filled tabs stay open in the Jobify browser; review each one and submit it yourself. Pause waits for the current job to finish; Stop cancels it.</div>
+		</div>
+		<div class="card">
+			<div class="row" style="justify-content: space-between"><h2 style="margin: 0">Job links</h2><span class="hint" id="linkcount" style="margin: 0"></span></div>
+			<div class="hint" style="margin: 2px 0 10px">Paste links to jobs you want (one per line, or a whole message with links in it). Jobify applies to them first, before searching the boards, and also picks up links you add while it runs.</div>
+			<textarea id="linkinput" placeholder="https://jobs.lever.co/acme/123&#10;https://boards.greenhouse.io/acme/jobs/456"></textarea>
+			<div class="row" style="margin-top: 8px">
+				<button class="btn" id="applylinks" title="Starts Jobify for these links only when it is not running; added to the running loop otherwise">Apply to these</button>
+				<button class="btn ghost" id="addlinks">Add to list</button>
+				<div class="spacer"></div>
+				<button class="btn ghost small" id="clearlinks" hidden>Clear finished</button>
+			</div>
+			<div class="links" id="links"></div>
 		</div>
 		<div class="card">
 			<h2>Activity</h2>
@@ -187,7 +205,6 @@
 				<label>Jobs per day</label><input type="number" id="daily_cap" min="1" max="200">
 				<label>Pause for review at</label><div class="row"><input type="number" id="max_review_tabs" min="1" max="100" style="width:90px"><span class="hint">filled tabs waiting for you (keeps the PC fast and nothing forgotten)</span></div>
 				<label>Skip jobs older than</label><div class="row"><input type="number" id="max_job_age_days" min="1" max="365" style="width:90px"><span class="hint">days (fresh postings get far more replies; newest are applied to first)</span></div>
-				<label>Job URLs (one per line)</label><textarea id="job_urls" placeholder="Pasted links are applied to first, before any search."></textarea>
 				<label>Browser (optional)</label>
 				<div class="row"><span class="path" id="browser_executable">Chrome or Edge (automatic)</span><button class="btn ghost" data-pick="browser">Choose</button><button class="btn ghost" id="autobrowser">Automatic</button></div>
 			</div>
@@ -244,7 +261,6 @@ function fillSetup(st) {
 	$('gemini_api_key').placeholder = s.gemini_api_key ? 'saved (leave empty to keep)' : 'not set';
 	$('openai_api_key').placeholder = s.openai_api_key ? 'saved (leave empty to keep)' : 'not set';
 	$('cg_model').value = s.chatgpt.model;
-	$('job_urls').value = (s.job_urls || []).join('\n');
 	$('boards').innerHTML = Object.entries(st.boards).map(([id, label]) =>
 		`<label><input type="checkbox" value="${id}" ${s.boards.includes(id) ? 'checked' : ''}> ${esc(label)}</label>`).join('');
 	$('home').textContent = 'Data folder: ' + st.home;
@@ -258,7 +274,7 @@ function setupData() {
 		cover_letter_tone: $('cover_letter_tone').value.trim(), provider: $('provider').value, backup_provider: $('backup_provider').value,
 		gemini_model: $('gemini_model').value.trim(), gemini_api_key: $('gemini_api_key').value.trim(),
 		openai_model: $('openai_model').value.trim(), openai_api_key: $('openai_api_key').value.trim(),
-		chatgpt: cg, daily_cap: $('daily_cap').value, job_urls: $('job_urls').value,
+		chatgpt: cg, daily_cap: $('daily_cap').value,
 		max_review_tabs: Number($('max_review_tabs').value), max_job_age_days: Number($('max_job_age_days').value),
 		boards: [...document.querySelectorAll('#boards input:checked')].map(i => i.value),
 	};
@@ -448,10 +464,42 @@ function renderState(st) {
 		: 'Signed in' + (st.chatgpt.email ? ' as ' + st.chatgpt.email : '') + (st.chatgpt.plan_usage ? '' : ' (plan use not allowed: sign in again)');
 }
 
+const LINK_LABEL = {waiting: 'waiting', applying: 'applying now', filled: 'filled, review it', email_drafted: 'email drafted',
+	needs_input: 'needs your answers', submitted: 'submitted', skipped: 'skipped', failed: 'failed'};
+function renderLinks(links) {
+	links = links || [];
+	const waiting = links.filter(l => l.status === 'waiting').length, active = links.filter(l => l.status === 'applying').length;
+	$('linkcount').textContent = links.length ? `${waiting} waiting, ${links.length - waiting - active} done` : '';
+	$('clearlinks').hidden = !links.some(l => !['waiting', 'applying'].includes(l.status));
+	const html = links.map(l => `<div class="link"><span class="pill ${esc(l.status)}">${esc(LINK_LABEL[l.status] || l.status)}</span>`
+		+ `<a title="${esc(l.url)}">${esc(l.url)}</a><button class="x" data-unlink="${esc(l.url)}" title="Remove">&times;</button></div>`).join('');
+	if ($('links').innerHTML !== html) $('links').innerHTML = html;
+}
+$('links').onclick = async e => {
+	const b = e.target.closest('[data-unlink]');
+	if (b) { await call('remove_job_link', b.dataset.unlink); refresh(false); }
+};
+async function addLinks(applyNow) {
+	const text = $('linkinput').value;
+	if (!text.trim()) return toast('Paste one or more job links first.');
+	const r = await call('add_job_links', text, applyNow);
+	$('linkinput').value = '';
+	const parts = [`${r.added} link${r.added === 1 ? '' : 's'} added`];
+	if (r.already_done) parts.push(`${r.already_done} already applied to`);
+	if (r.duplicates) parts.push(`${r.duplicates} already in the list`);
+	const running = state && state.runner !== 'idle';
+	toast(parts.join(', ') + (running ? '. They are next in the running loop.' : applyNow ? '. Starting...' : '. Press Start or Apply to these.'), 5000);
+	refresh(false);
+}
+$('addlinks').onclick = () => addLinks(false);
+$('applylinks').onclick = () => addLinks(true);
+$('clearlinks').onclick = async () => { await call('clear_finished_links'); refresh(false); };
+
 async function refresh(full) {
 	const st = await api.state();
 	state = st;
 	renderState(st);
+	renderLinks(st.links);
 	renderQuestions(st.questions);
 	renderRows(st.rows);
 	if (full) fillSetup(st);

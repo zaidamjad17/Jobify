@@ -22,16 +22,26 @@ need Chrome or Edge installed (Edge comes with Windows).
      companies to avoid. An optional `- Cover letter tone: ...` line sets the letter's tone.
    - **Resume template**: the built-in one, or your own HTML (see "Resume template" below).
 2. **Setup → AI model**: a Gemini API key, an OpenAI API key, or **Sign in with ChatGPT** (see below).
-3. **Setup → Jobs**: which boards to search, how many jobs per day (default 20), and any job URLs you want handled
-   first.
+3. **Setup → Jobs**: which boards to search and how many jobs per day (default 20).
 4. **Setup → Log in to sites**. This opens the Jobify browser normally. Sign in to Google (Gmail), LinkedIn and
    Indeed, then close that window. The logins are kept. Log in here, not during a run: Google refuses to sign in to a
    browser that is being remote-controlled ("This browser or app may not be secure").
 5. **Run → Start**. The browser window opens and the loop begins.
 
+## Job links
+
+On **Run → Job links**, paste links to jobs you want (one per line, or a whole message with links in it):
+
+- **Apply to these** starts Jobify for your links alone (no board search) when it is idle.
+- **Add to list** keeps them for the next Start, where they come before the board search.
+- While the loop runs, links you add are applied to next.
+
+Each link shows its status (waiting, applying now, filled, needs your answers, ...). A job you already applied to is
+not added again. **Clear finished** removes the done ones; × removes one.
+
 ## What happens in the loop
 
-- **Job order**: pasted URLs come first. After that it searches the selected boards in turn: LinkedIn (Easy Apply
+- **Job order**: your job links come first. After that it searches the selected boards in turn: LinkedIn (Easy Apply
   preferred), Indeed, Greenhouse, Lever, Ashby and Wellfound. It never opens the same job twice, even through a
   different link (the URL is normalized).
 - **Criteria check**: a posting that clearly fails your criteria is marked `skipped` and its tab is closed.

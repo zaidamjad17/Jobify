@@ -9,6 +9,7 @@ import contextlib
 import dataclasses
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,36 @@ LOGIN_PAGES = (
 	'https://www.linkedin.com/login',
 	'https://secure.indeed.com/auth',
 )
+
+
+LINK = re.compile(r'(?:https?://|www\.)[^\s<>"\'`]+', re.IGNORECASE)
+
+
+def parse_links(text: str) -> list[str]:
+	"""The job links in pasted text (one per line, or mixed with other words), in order, without repeats."""
+	from jobapply.tracker import job_key
+
+	links: list[str] = []
+	keys: set[str] = set()
+	for match in LINK.findall(text or ''):
+		url = match.rstrip('.,;:!?)]}>\'"')
+		if url.lower().startswith('www.'):
+			url = 'https://' + url
+		if job_key(url) not in keys:
+			keys.add(job_key(url))
+			links.append(url)
+	return links
+
+
+def link_status(url: str, rows: list, current: dict) -> str:
+	"""'waiting', 'applying', or the status of the job's newest row in the history."""
+	from jobapply.tracker import job_key
+
+	key = job_key(url)
+	if current.get('url') and job_key(current['url']) == key:
+		return 'applying'
+	row = next((r for r in reversed(rows) if r.url and job_key(r.url) == key), None)
+	return row.status if row else 'waiting'
 
 
 def open_path(path: str | Path) -> None:
@@ -88,6 +119,8 @@ class Api:
 
 		settings = Settings.load()
 		t = tracker()
+		rows = t.rows()
+		current = self._runner.current if self._runner else {}
 		return {
 			'version': __version__,
 			'settings': settings.public(),
@@ -99,7 +132,8 @@ class Api:
 			'today': t.count_today(),
 			'cap': settings.daily_cap,
 			'questions': [dataclasses.asdict(q) for q in questions().open()],
-			'rows': [dataclasses.asdict(r) for r in reversed(t.rows()[-300:])],
+			'rows': [dataclasses.asdict(r) for r in reversed(rows[-300:])],
+			'links': [{'url': u, 'status': link_status(u, rows, current)} for u in settings.job_urls],
 			'home': str(app_home()),
 			'profile_score': self._profile_score(settings),
 		}
@@ -238,6 +272,53 @@ class Api:
 		if isinstance(runner, dict):
 			return runner
 		runner.start()
+		return {'ok': True}
+
+	# job links
+
+	def add_job_links(self, text: str, apply_now: bool = False) -> dict:
+		"""Add the job links in the pasted text. They are applied to next while the loop runs; apply_now starts a run
+		for the links alone when it is idle (no board search)."""
+		from jobapply.tracker import job_key
+
+		links = parse_links(text)
+		if not links:
+			return {'error': 'No job links found. Paste links that start with https://'}
+		settings = Settings.load()
+		keys = {job_key(u) for u in settings.job_urls}
+		t = tracker()
+		new = [u for u in links if job_key(u) not in keys and not t.seen(u)]
+		done = sum(1 for u in links if t.seen(u))
+		if new:
+			settings.job_urls = [*settings.job_urls, *new]
+			settings.save()
+		runner = self._runner
+		if new and runner and runner.state != 'idle':
+			runner.add_links(new)
+		elif apply_now and (new or any(link_status(u, t.rows(), {}) == 'waiting' for u in settings.job_urls)):
+			ready = self._ready_runner()
+			if isinstance(ready, dict):
+				return {**ready, 'added': len(new), 'already_done': done}
+			ready.start(links_only=True)
+		return {'ok': True, 'added': len(new), 'already_done': done, 'duplicates': len(links) - len(new) - done}
+
+	def remove_job_link(self, url: str) -> dict:
+		from jobapply.tracker import job_key
+
+		settings = Settings.load()
+		settings.job_urls = [u for u in settings.job_urls if job_key(u) != job_key(url)]
+		settings.save()
+		if self._runner:
+			self._runner.remove_link(url)
+		return {'ok': True}
+
+	def clear_finished_links(self) -> dict:
+		"""Drop the links that were applied to (or skipped), keep the ones still waiting."""
+		settings = Settings.load()
+		rows = tracker().rows()
+		current = self._runner.current if self._runner else {}
+		settings.job_urls = [u for u in settings.job_urls if link_status(u, rows, current) in ('waiting', 'applying')]
+		settings.save()
 		return {'ok': True}
 
 	def refill(self, url: str) -> dict:
