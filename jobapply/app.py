@@ -101,7 +101,22 @@ class Api:
 			'questions': [dataclasses.asdict(q) for q in questions().open()],
 			'rows': [dataclasses.asdict(r) for r in reversed(t.rows()[-300:])],
 			'home': str(app_home()),
+			'profile_score': self._profile_score(settings),
 		}
+
+	@staticmethod
+	def _profile_score(settings: Settings) -> dict | None:
+		"""How much of what application forms ask the profile already answers."""
+		from jobapply.profile import completeness
+
+		try:
+			text = Path(settings.profile_path).expanduser().read_text(encoding='utf-8-sig') if settings.profile_path else ''
+		except OSError:
+			return None
+		if not text:
+			return None
+		score, missing = completeness(text)
+		return {'score': score, 'missing': missing}
 
 	def save_settings(self, data: dict) -> dict:
 		"""Fields left out keep their value; an empty key field keeps the saved key."""
@@ -282,6 +297,8 @@ class Api:
 		"""The user did what the agent asked (captcha, login, code)."""
 		if self._runner:
 			self._runner.help_done()
+			if self._runner.state == 'held' and not self._runner.current:  # a hold for review: the loop goes on
+				self._runner.resume()
 		return {'ok': True}
 
 	def stop(self) -> dict:

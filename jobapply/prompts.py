@@ -87,7 +87,9 @@ The user chose not to answer: {skipped}. Leave those fields empty and do not ask
 SEARCH_TASK = """Find up to {count} job postings on {board} that match the job criteria and are not yet in the user's list.
 
 Start at {start_url} (already open in the current tab) and search with the criteria's titles and locations, newest
-first when the site offers it. {board_hint}
+first when the site offers it (a "past week" / "past 2 weeks" date filter when there is one): fresh postings get far
+more replies. Skip postings older than {age} days and report each job's posted_days_ago when the site shows it.
+{board_hint}
 This is search round {round}: earlier rounds already went through the results before page {round}, so go to results
 page {round} (use the site's page links or its start/offset parameter) and collect from there; continue to the next
 pages while you have fewer than {count}.
@@ -123,6 +125,7 @@ class FoundJob(BaseModel):
 	company: str = ''
 	title: str = ''
 	board: str = ''
+	posted_days_ago: int | None = Field(None, description='days since the posting went up, when the site shows it')
 
 
 class FoundJobs(BaseModel):

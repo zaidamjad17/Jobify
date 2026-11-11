@@ -86,6 +86,48 @@ STARTER_CRITERIA = """# Job criteria
 """
 
 
+# What application forms ask most: (label shown to the user, pattern of the profile line or saved question)
+COMPLETENESS_ITEMS = (
+	('Full name', r'full name'),
+	('Email', r'e-?mail'),
+	('Phone', r'phone'),
+	('City, country', r'city'),
+	('LinkedIn', r'linkedin'),
+	('Work authorization', r'authori[sz]ed to work'),
+	('Visa sponsorship', r'sponsorship'),
+	('Notice period', r'notice period|availability to start'),
+	('Salary range', r'salary'),
+	('Willing to relocate', r'relocat'),
+	('Languages', r'languages'),
+	('A project you are proud of', r'project you are proud'),
+	('A time you took ownership', r'took ownership'),
+	('A measurable result', r'measurable result'),
+	('Two-year goal', r'two years'),
+)
+
+
+def completeness(profile: str) -> tuple[int, list[str]]:
+	"""How much of what forms ask the profile answers: (percent, labels still missing). A line counts when it has a
+	value after its colon (not a "(e.g. ...)" hint), or a saved answer (Q:/A:) covers it."""
+	lines = [line.strip().lstrip('-* ') for line in profile.splitlines()]
+	missing = []
+	for label, pattern in COMPLETENESS_ITEMS:
+		found = False
+		for i, line in enumerate(lines):
+			if line.startswith('Q:'):  # a saved answer: the question names the topic, the next line answers it
+				nxt = lines[i + 1] if i + 1 < len(lines) else ''
+				found = bool(re.search(pattern, line, re.I)) and nxt.startswith('A:') and bool(nxt[2:].strip())
+			elif ':' in line:
+				key, value = (part.strip() for part in line.split(':', 1))
+				found = bool(re.search(pattern, key, re.I)) and bool(value) and not value.startswith('(')
+			if found:
+				break
+		if not found:
+			missing.append(label)
+	done = len(COMPLETENESS_ITEMS) - len(missing)
+	return round(100 * done / len(COMPLETENESS_ITEMS)), missing
+
+
 def read_text(path: str | Path, what: str) -> str:
 	if not path:
 		raise ValueError(f'Choose your {what} file in Setup first.')

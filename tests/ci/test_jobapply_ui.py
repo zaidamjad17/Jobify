@@ -27,7 +27,11 @@ STATE = {
 		'boards': [],
 		'daily_cap': 20,
 		'job_urls': [],
+		'backup_provider': '',
+		'max_review_tabs': 15,
+		'max_job_age_days': 14,
 	},
+	'profile_score': {'score': 60, 'missing': ['Salary range', 'Notice period']},
 	'boards': {},
 	'chatgpt': {'signed_in': False},
 	'runner': 'running',
@@ -194,6 +198,20 @@ def test_a_handoff_shows_the_banner_plays_a_sound_and_continue_tells_the_agent(c
 		time.sleep(0.3)
 		calls = ev('window.__calls')
 		assert ['help_done'] in calls and ['take_over'] in calls
+	finally:
+		cdp.send('Target.closeTarget', targetId=target)
+		cdp.close()
+
+
+def test_setup_shows_profile_completeness_and_history_says_why_jobs_are_not_finished(chrome):
+	cdp, session, target, ev = _page(chrome)
+	try:
+		text = ev('document.getElementById("scoretext").innerText')
+		assert '60%' in text and 'Salary range' in text and 'Notice period' in text
+		assert ev('document.getElementById("max_job_age_days").value') == '14'
+		assert '1 need you' in ev('document.getElementById("rowsummary").innerText')
+		assert '1 skipped' in ev('document.getElementById("rowsummary").innerText')
+		assert 'waiting on a question for you' in ev('document.getElementById("whybox").innerText')
 	finally:
 		cdp.send('Target.closeTarget', targetId=target)
 		cdp.close()

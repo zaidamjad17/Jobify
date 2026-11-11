@@ -45,6 +45,8 @@ class Settings:
 	chatgpt: ChatGPTLogin = field(default_factory=ChatGPTLogin)
 	boards: list[str] = field(default_factory=lambda: list(BOARDS))
 	daily_cap: int = 20
+	max_review_tabs: int = 15  # the loop holds when this many filled tabs wait for the user's review
+	max_job_age_days: int = 14  # postings older than this are skipped; the newest are applied to first
 	job_urls: list[str] = field(default_factory=list)  # pasted URLs, applied to before any board search
 	browser_executable: str = ''  # '' = Chrome or Edge, whichever is installed
 
@@ -80,6 +82,10 @@ class Settings:
 			self.backup_provider = ''
 		if isinstance(self.daily_cap, bool) or not isinstance(self.daily_cap, int) or not 1 <= self.daily_cap <= 200:
 			raise ValueError(f'daily_cap must be a whole number from 1 to 200, not {self.daily_cap!r}')
+		for name, low, high in (('max_review_tabs', 1, 100), ('max_job_age_days', 1, 365)):
+			value = getattr(self, name)
+			if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+				raise ValueError(f'{name} must be a whole number from {low} to {high}, not {value!r}')
 		unknown = [b for b in self.boards if b not in BOARDS]
 		if unknown:
 			raise ValueError(f'unknown job boards: {", ".join(unknown)}')

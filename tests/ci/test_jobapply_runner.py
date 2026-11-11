@@ -826,3 +826,34 @@ def test_preflight_asks_for_help_on_a_logged_out_board_and_skips_it_when_nobody_
 	finally:
 		r.stop()
 		asyncio.run(r.close_browser())
+
+
+def test_the_loop_holds_when_too_many_filled_tabs_wait_for_review(tmp_path, monkeypatch):
+	"""Review tab limit: with max_review_tabs filled tabs open and not yet submitted, the loop stops and asks the user to
+	review; Continue after marking one submitted lets it go on. The day ends with a summary."""
+	r, urls, seen, events, profile = _runner_with(
+		tmp_path,
+		monkeypatch,
+		{'job.html': JOB, 'next.html': JOB},
+		_filled('x'),
+		_filled('y'),
+		max_review_tabs=1,
+	)
+	try:
+		r.start()
+		for _ in range(300):
+			if r.state == 'held':
+				break
+			time.sleep(0.05)
+		assert r.state == 'held'
+		assert any(e['kind'] == 'help' and 'review' in e['reason'].lower() for e in events)
+		assert [row.status for row in runner_mod.tracker().rows()] == ['filled']
+		runner_mod.tracker().update(urls[0], status='submitted')
+		r.resume()
+		r._thread.join(120)
+		assert [row.status for row in runner_mod.tracker().rows()] == ['submitted', 'filled']
+		summary = [e['text'] for e in events if e['kind'] == 'log' and e['text'].startswith('Today:')]
+		assert summary and '1 ready to submit' in summary[-1] and '1 submitted' in summary[-1]
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())

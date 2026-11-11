@@ -169,6 +169,15 @@ def refill_task(url: str, row: Row) -> str:
 	return REFILL_TASK.replace('{url}', url).replace('{questions}', answered).replace('{skipped}', skipped)
 
 
+def freshest_first(jobs: list[dict], max_age_days: int) -> list[dict]:
+	"""Newest postings first (they get the most replies); older than max_age_days dropped; unknown age last."""
+	kept = [j for j in jobs if j.get('days') is None or j['days'] <= max_age_days]
+	return sorted(kept, key=lambda j: (j.get('days') is None, j.get('days') or 0))
+
+
+REVIEW_STATUSES = ('filled', 'email_drafted', 'needs_input')
+
+
 def build_rules(profile: str, criteria: str) -> str:
 	return RULES.replace('{profile}', profile).replace('{criteria}', criteria)  # the files may hold braces
 
@@ -332,6 +341,8 @@ class Runner:
 				empty[board] = 0 if fresh else empty[board] + 1
 				queue.extend(fresh)
 				continue
+			if await self._hold_for_review():
+				continue  # the user may have answered questions meanwhile: refills first
 			job = queue.popleft()
 			if self.tracker.seen(job['url']):
 				continue
@@ -341,6 +352,52 @@ class Runner:
 			if self._refill_only
 			else 'Loop finished. Your filled tabs stay open in the JobApply browser for review.'
 		)
+		self._log(self.summary())
+
+	def summary(self) -> str:
+		"""Today in one line: what is ready, what needs the user, what happened to the rest."""
+		today = datetime.now().strftime('%Y-%m-%d')
+		latest: dict[str, Row] = {}
+		for row in self.tracker.rows():
+			if row.url and row.date == today:
+				latest[job_key(row.url)] = row
+		count = lambda *statuses: sum(1 for r in latest.values() if r.status in statuses)  # noqa: E731
+		return (
+			f'Today: {count("filled", "email_drafted")} ready to submit, {count("needs_input")} need you, '
+			f'{count("submitted")} submitted, {count("skipped")} skipped, {count("failed")} failed.'
+		)
+
+	def review_waiting(self) -> int:
+		"""Filled jobs whose tabs are still open for the user (not yet marked submitted)."""
+		latest: dict[str, Row] = {}
+		for row in self.tracker.rows():
+			if row.url:
+				latest[job_key(row.url)] = row
+		pages = self.guard.pages if self.guard else {}
+		return sum(1 for r in latest.values() if r.status in REVIEW_STATUSES and any(t in pages for t in r.tab_id.split()))
+
+	async def _hold_for_review(self) -> bool:
+		"""Too many filled tabs wait for the user: hold the loop (banner + sound) until Continue. True if it held."""
+		waiting = self.review_waiting()
+		if waiting < self.settings.max_review_tabs:
+			return False
+		reason = (
+			f'{waiting} applications are waiting for your review. Submit them (then Submitted in History) or close '
+			'their tabs, then click Continue.'
+		)
+		self._resume.clear()
+		self._set_state('held')
+		self.help = {'reason': reason, 'need': 'review', 'url': '', 'tab': '', 'company': ''}
+		self._log(f'Needs you: {reason}', 'error')
+		self._emit('help', sound=True, wait_s=0, **self.help)
+		try:
+			await self._paused()
+		finally:
+			self.help = None
+			self._emit('help_end')
+		if self.state == 'held':
+			self._set_state('running')
+		return True
 
 	async def _paused(self) -> None:
 		await asyncio.to_thread(self._resume.wait)  # a threading.Event: pause()/resume() come from the UI thread
@@ -535,6 +592,7 @@ class Runner:
 			.replace('{start_url}', start_url)
 			.replace('{board_hint}', BOARD_HINTS.get(board, ''))
 			.replace('{round}', str(round_))
+			.replace('{age}', str(self.settings.max_job_age_days))
 		)
 		try:
 			result = await self._run_agent(task, FoundJobs, tools, SEARCH_MAX_STEPS, SEARCH_TIMEOUT_S)
@@ -545,7 +603,12 @@ class Runner:
 		found = output.jobs if output else []
 		if output and output.blocked:
 			self._log(f'{label}: {output.blocked}', 'error')
-		jobs = [{'url': j.url, 'board': j.board or board, 'company': j.company, 'title': j.title} for j in found if j.url]
+		jobs = [
+			{'url': j.url, 'board': j.board or board, 'company': j.company, 'title': j.title, 'days': j.posted_days_ago}
+			for j in found
+			if j.url
+		]
+		jobs = freshest_first(jobs, self.settings.max_job_age_days)
 		self._log(f'{label}: {len(jobs)} new job(s) found.' if jobs else f'{label}: nothing new.')
 		return jobs
 

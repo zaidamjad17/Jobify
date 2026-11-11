@@ -66,6 +66,9 @@
 		background: #fff3cd; color: #4a3500; border: 1px solid #e0b400; border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; }
 	.helpbar[hidden] { display: none; }
 	.state.held { color: var(--warn); }
+	.meter { height: 8px; background: var(--chip); border-radius: 4px; overflow: hidden; margin: 4px 0; }
+	.meter div { height: 100%; width: 0; background: var(--ok); transition: width .3s; }
+	.why { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
 	.checkok { color: var(--ok); font-size: 12.5px; margin-top: 3px; }
 	.checkwarn { color: var(--warn); font-size: 12.5px; margin-top: 3px; }
 	.provider-fields { display: none; } .provider-fields.on { display: contents; }
@@ -119,8 +122,9 @@
 
 	<section id="history">
 		<div class="card">
-			<div class="row"><h2 style="margin:0">Applications</h2><div class="spacer"></div>
+			<div class="row"><h2 style="margin:0">Applications</h2><span class="hint" id="rowsummary"></span><div class="spacer"></div>
 				<button class="btn ghost" id="opencsv">Open CSV</button><button class="btn ghost" id="openhome">Open data folder</button></div>
+			<div class="why" id="whybox"></div>
 			<div style="max-height: 620px; overflow: auto; margin-top: 10px">
 				<table><thead><tr><th>When</th><th>Company / role</th><th>Status</th><th>Files</th><th>Notes</th></tr></thead><tbody id="rows"></tbody></table>
 			</div>
@@ -133,6 +137,8 @@
 			<div class="grid">
 				<label>Profile (.md)</label>
 				<div class="row"><span class="path" id="profile_path">not set</span><button class="btn ghost" data-pick="profile">Choose</button><button class="btn ghost" data-starter="profile">New from template</button></div>
+				<label>Profile completeness</label>
+				<div><div class="meter"><div id="scorebar"></div></div><div class="hint" id="scoretext">Choose a profile to see what it is missing.</div></div>
 				<label>Job criteria (.md)</label>
 				<div class="row"><span class="path" id="criteria_path">not set</span><button class="btn ghost" data-pick="criteria">Choose</button><button class="btn ghost" data-starter="criteria">New from template</button></div>
 				<label>Resume template</label>
@@ -176,6 +182,8 @@
 			<div class="grid">
 				<label>Boards to search</label><div class="boards" id="boards"></div>
 				<label>Jobs per day</label><input type="number" id="daily_cap" min="1" max="200">
+				<label>Pause for review at</label><div class="row"><input type="number" id="max_review_tabs" min="1" max="100" style="width:90px"><span class="hint">filled tabs waiting for you (keeps the PC fast and nothing forgotten)</span></div>
+				<label>Skip jobs older than</label><div class="row"><input type="number" id="max_job_age_days" min="1" max="365" style="width:90px"><span class="hint">days (fresh postings get far more replies; newest are applied to first)</span></div>
 				<label>Job URLs (one per line)</label><textarea id="job_urls" placeholder="Pasted links are applied to first, before any search."></textarea>
 				<label>Browser (optional)</label>
 				<div class="row"><span class="path" id="browser_executable">Chrome or Edge (automatic)</span><button class="btn ghost" data-pick="browser">Choose</button><button class="btn ghost" id="autobrowser">Automatic</button></div>
@@ -223,7 +231,13 @@ function fillSetup(st) {
 	$('criteria_path').textContent = s.criteria_path || 'not set';
 	$('resume_template_path').textContent = s.resume_template_path || 'built-in';
 	$('browser_executable').textContent = s.browser_executable || 'Chrome or Edge (automatic)';
-	for (const k of ['cover_letter_tone', 'gemini_model', 'openai_model', 'daily_cap', 'provider', 'backup_provider']) $(k).value = s[k];
+	for (const k of ['cover_letter_tone', 'gemini_model', 'openai_model', 'daily_cap', 'provider', 'backup_provider', 'max_review_tabs', 'max_job_age_days']) $(k).value = s[k];
+	const ps = st.profile_score;
+	$('scorebar').style.width = (ps ? ps.score : 0) + '%';
+	$('scorebar').style.background = ps && ps.score >= 80 ? 'var(--ok)' : 'var(--warn)';
+	$('scoretext').textContent = !ps ? 'Choose a profile to see what it is missing.'
+		: ps.missing.length ? `${ps.score}% complete. Missing (forms ask these, so they become questions): ${ps.missing.join(', ')}.`
+		: '100% complete: forms rarely need to ask you anything.';
 	$('gemini_api_key').placeholder = s.gemini_api_key ? 'saved (leave empty to keep)' : 'not set';
 	$('openai_api_key').placeholder = s.openai_api_key ? 'saved (leave empty to keep)' : 'not set';
 	$('cg_model').value = s.chatgpt.model;
@@ -242,6 +256,7 @@ function setupData() {
 		gemini_model: $('gemini_model').value.trim(), gemini_api_key: $('gemini_api_key').value.trim(),
 		openai_model: $('openai_model').value.trim(), openai_api_key: $('openai_api_key').value.trim(),
 		chatgpt: cg, daily_cap: $('daily_cap').value, job_urls: $('job_urls').value,
+		max_review_tabs: Number($('max_review_tabs').value), max_job_age_days: Number($('max_job_age_days').value),
 		boards: [...document.querySelectorAll('#boards input:checked')].map(i => i.value),
 	};
 }
@@ -364,7 +379,29 @@ function renderQuestions(qs) {
 	});
 }
 
+function renderSummary(rows) {
+	const latest = {};
+	for (const r of rows) if (!latest[r.url]) latest[r.url] = r;  // rows come newest first
+	const all = Object.values(latest), n = (...st) => all.filter(r => st.includes(r.status)).length;
+	const parts = [`${n('filled', 'email_drafted')} ready to submit`, `${n('needs_input')} need you`, `${n('submitted')} submitted`, `${n('skipped')} skipped`, `${n('failed')} failed`];
+	$('rowsummary').textContent = all.length ? ' · ' + parts.join(' · ') : '';
+	const waiting = all.filter(r => r.status === 'needs_input');
+	const why = { 'a question for you': 0, 'a login or bot check': 0, 'stuck on the page': 0, 'paused by you': 0 };
+	for (const r of waiting) {
+		const t = (r.notes + ' ' + r.unanswered_questions).toLowerCase();
+		if (t.includes('stuck')) why['stuck on the page']++;
+		else if (t.includes('took over')) why['paused by you']++;
+		else if (/log in|login|captcha|verify|bot check|sign in/.test(t)) why['a login or bot check']++;
+		else why['a question for you']++;
+	}
+	const reasons = Object.entries(why).filter(([, c]) => c).map(([k, c]) => `${c} waiting on ${k}`);
+	const failed = all.filter(r => r.status === 'failed').length;
+	if (failed) reasons.push(`${failed} failed (see notes)`);
+	$('whybox').textContent = reasons.length ? 'Not finished: ' + reasons.join(', ') + '.' : '';
+}
+
 function renderRows(rows) {
+	renderSummary(rows);
 	$('rows').innerHTML = rows.length ? rows.map(r => {
 		const open = ['needs_input', 'filled', 'email_drafted', 'failed'].includes(r.status);
 		const actions = [
