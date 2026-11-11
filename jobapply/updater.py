@@ -57,11 +57,16 @@ def check(current: str = __version__, repo: str = REPO, client: httpx.Client | N
 	own = client is None
 	client = client or httpx.Client(timeout=TIMEOUT_S, follow_redirects=True)
 	try:
-		response = client.get(
-			f'{API}/repos/{repo}/releases', params={'per_page': 30}, headers={'Accept': 'application/vnd.github+json'}
-		)
-	except httpx.HTTPError as e:
-		raise UpdateError(f'Could not reach GitHub to check for updates: {e}') from None
+		try:
+			response = client.get(
+				f'{API}/repos/{repo}/releases', params={'per_page': 30}, headers={'Accept': 'application/vnd.github+json'}
+			)
+		except httpx.HTTPError as e:
+			raise UpdateError(f'Could not reach GitHub to check for updates: {e}') from None
+		if response.status_code in (403, 429):
+			# The API allows 60 requests an hour per internet address without an account; a shared address (mobile
+			# network, office, VPN) runs out. The release pages on github.com have no such limit.
+			return _check_pages(current, repo, client, response.status_code)
 	finally:
 		if own:
 			client.close()
@@ -91,6 +96,39 @@ def check(current: str = __version__, repo: str = REPO, client: httpx.Client | N
 		if best is None or version > best[0]:
 			best = (version, release)
 	return best[1] if best else None
+
+
+def _check_pages(current: str, repo: str, client: httpx.Client, api_status: int) -> Release | None:
+	"""check() without the API: the latest release from github.com/<repo>/releases/latest and its installer from the
+	release's asset list. No checksum is listed there; the download is still HTTPS from GitHub."""
+	page = f'https://github.com/{repo}/releases/latest'
+	try:
+		latest = client.get(page, follow_redirects=True)
+		tag = latest.url.path.rstrip('/').rsplit('/', 1)[-1] if '/releases/tag/' in latest.url.path else ''
+		version = parse_version(tag.removeprefix(TAG_PREFIX)) if tag.startswith(TAG_PREFIX) else None
+		if latest.status_code != 200 or version is None:
+			raise UpdateError(
+				f'GitHub answered {api_status} when checking for updates (its hourly limit). Try again later, or '
+				f'download the newest installer from {page}'
+			)
+		if version <= (parse_version(current) or (0,)):
+			return None
+		assets = client.get(f'https://github.com/{repo}/releases/expanded_assets/{tag}', follow_redirects=True)
+	except httpx.HTTPError as e:
+		raise UpdateError(f'Could not reach GitHub to check for updates: {e}') from None
+	match = re.search(rf'href="(/{re.escape(repo)}/releases/download/{re.escape(tag)}/([^"/]+\.exe))"', assets.text, re.I)
+	if assets.status_code != 200 or not match:
+		return None  # the build has not attached the installer yet
+	return Release(
+		version='.'.join(map(str, version)),
+		tag=tag,
+		notes='',
+		url='https://github.com' + match.group(1),
+		name=match.group(2),
+		size=0,
+		sha256='',
+		page=str(latest.url),
+	)
 
 
 def download(release: Release, progress: Callable[[int, int], Any] | None = None, client: httpx.Client | None = None) -> Path:
