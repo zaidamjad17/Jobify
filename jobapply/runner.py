@@ -337,6 +337,9 @@ class Runner:
 				board_index += 1
 				rounds[board] += 1
 				found = await self._search(board, llm, rounds[board])
+				if found is None:  # interrupted (Take over): search this page again after Continue
+					rounds[board] -= 1
+					continue
 				fresh = [j for j in found if not self.tracker.seen(j['url'])]
 				empty[board] = 0 if fresh else empty[board] + 1
 				queue.extend(fresh)
@@ -569,7 +572,8 @@ class Runner:
 					self._log('Gmail is not ready: email applications will ask you to log in when they need it.', 'error')
 		return blocked
 
-	async def _search(self, board: str, llm: Any, round_: int = 1) -> list[dict]:
+	async def _search(self, board: str, llm: Any, round_: int = 1) -> list[dict] | None:
+		"""The jobs found on this board's results page round_; None when the search was interrupted."""
 		from browser_use import Tools
 
 		label, start_url = BOARDS[board]
@@ -596,6 +600,9 @@ class Runner:
 		)
 		try:
 			result = await self._run_agent(task, FoundJobs, tools, SEARCH_MAX_STEPS, SEARCH_TIMEOUT_S)
+		except Interrupted as e:  # Take over (or stuck) during a search: no jobs from this round; the loop goes on
+			self._log(f'{label}: search paused.' if e.reason == 'hold' else f'{label}: the search got stuck; moving on.', 'error')
+			return None
 		finally:
 			if self.guard:  # search tabs are not for review
 				await asyncio.to_thread(self._close_tabs, self.guard.tabs_since(mark))

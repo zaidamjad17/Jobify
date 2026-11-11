@@ -857,3 +857,46 @@ def test_the_loop_holds_when_too_many_filled_tabs_wait_for_review(tmp_path, monk
 	finally:
 		r.stop()
 		asyncio.run(r.close_browser())
+
+
+def test_take_over_during_a_search_holds_the_loop_instead_of_ending_it(tmp_path, monkeypatch):
+	"""Codex review: Take over while a board was being searched cancelled the search, and the Interrupted error ended the
+	whole loop. The loop now holds; Continue searches that board again."""
+	chrome = find_chrome() or pytest.skip('Chrome not installed')
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	(tmp_path / 'ok.html').write_text('<h1>Jobs</h1>', encoding='utf-8')
+	ok = (tmp_path / 'ok.html').as_uri()
+	monkeypatch.setattr(runner_mod, 'PREFLIGHT', {'lever': ('Lever', ok), 'gmail': ('Gmail', ok)})
+	monkeypatch.setattr(runner_mod, 'BOARDS', {'lever': ('Lever', ok)})
+	monkeypatch.setattr(runner_mod, 'MAX_EMPTY_ROUNDS', 1)
+	(tmp_path / 'p.md').write_text(PROFILE, encoding='utf-8')
+	settings = Settings(
+		profile_path=str(tmp_path / 'p.md'),
+		criteria_path=str(tmp_path / 'p.md'),
+		gemini_api_key='k',
+		boards=['lever'],
+		browser_executable=chrome,
+	)
+	model, seen = script(('python', {'code': SLOW}), ('finish', {'success': True, 'result': {'jobs': []}}))
+	monkeypatch.setattr(runner_mod, 'agent_llm', lambda s, provider=None: model)
+	monkeypatch.setattr(runner_mod, 'writer_model', lambda m: None)
+	events: list[dict] = []
+	r = runner_mod.Runner(settings, events.append)
+	try:
+		r.start()
+		for _ in range(300):
+			if r.current.get('phase') == 'search' and r._agent_task is not None:
+				break
+			time.sleep(0.05)
+		time.sleep(0.5)
+		assert r.take_over()
+		time.sleep(1.5)
+		assert r.state == 'held' and r._thread.is_alive()
+		r.resume()
+		r._thread.join(60)
+		logs = [e['text'] for e in events if e['kind'] == 'log']
+		assert any('Loop finished' in x or 'No more new jobs' in x for x in logs)
+		assert not any(x.startswith('Stopped:') for x in logs)
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())
