@@ -42,6 +42,8 @@ class Row:
 	cover_letter: str = ''
 	unanswered_questions: str = ''
 	notes: str = ''
+	check: str = ''  # the final check: required fields still empty, error messages on the form
+	screenshot: str = ''  # the form as JobApply left it (PNG)
 
 
 COLUMNS = [f.name for f in fields(Row)]
@@ -65,6 +67,7 @@ class Tracker:
 		now = datetime.now()
 		row.date, row.time = row.date or now.strftime('%Y-%m-%d'), row.time or now.strftime('%H:%M')
 		with self._lock:
+			self._upgrade_header()
 			new = not self.path.exists() or self.path.stat().st_size == 0
 			# utf-8-sig on a new file: Excel on Windows reads it as UTF-8 (accented names stay readable)
 			with self.path.open('a', newline='', encoding='utf-8-sig' if new else 'utf-8') as f:
@@ -73,6 +76,24 @@ class Tracker:
 					writer.writeheader()
 				writer.writerow({k: _to_cell(v) for k, v in asdict(row).items()})
 		return row
+
+	def _upgrade_header(self) -> None:
+		"""A file from an older version (fewer columns) is rewritten with the current header before anything is
+		appended; appending under the old header would shift every column."""
+		try:
+			with self.path.open(newline='', encoding='utf-8-sig') as f:
+				header = next(csv.reader(f), None)
+		except FileNotFoundError:
+			return
+		if header is None or header == COLUMNS:
+			return
+		rows = self.rows()
+		tmp = self.path.with_suffix('.tmp')
+		with tmp.open('w', newline='', encoding='utf-8-sig') as f:
+			writer = csv.DictWriter(f, fieldnames=COLUMNS)
+			writer.writeheader()
+			writer.writerows({k: _to_cell(v) for k, v in asdict(r).items()} for r in rows)
+		tmp.replace(self.path)
 
 	def latest(self, url: str) -> Row | None:
 		"""The newest row for this job (any link to it)."""

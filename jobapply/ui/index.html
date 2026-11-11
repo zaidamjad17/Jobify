@@ -66,6 +66,8 @@
 		background: #fff3cd; color: #4a3500; border: 1px solid #e0b400; border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; }
 	.helpbar[hidden] { display: none; }
 	.state.held { color: var(--warn); }
+	.checkok { color: var(--ok); font-size: 12.5px; margin-top: 3px; }
+	.checkwarn { color: var(--warn); font-size: 12.5px; margin-top: 3px; }
 	.provider-fields { display: none; } .provider-fields.on { display: contents; }
 	.current { font-size: 15px; }
 </style>
@@ -371,8 +373,8 @@ function renderRows(rows) {
 		<td>${esc(r.date)}<br><span class="hint">${esc(r.time)}</span></td>
 		<td><b>${esc(r.company || '-')}</b><br>${esc(r.title)}<br><a data-url="${esc(r.url)}">posting</a>${actions ? ' · ' + actions : ''}</td>
 		<td><span class="pill ${esc(r.status)}">${esc(r.status.replace('_', ' '))}</span></td>
-		<td>${r.resume ? `<a data-open="${esc(r.resume)}">resume</a>` : ''}${r.cover_letter ? `<br><a data-open="${esc(r.cover_letter)}">cover letter</a>` : ''}</td>
-		<td>${esc(r.notes)}${r.unanswered_questions ? `<div class="hint">Waiting on: ${esc(r.unanswered_questions)}</div>` : ''}</td></tr>`;
+		<td>${r.resume ? `<a data-open="${esc(r.resume)}">resume</a>` : ''}${r.cover_letter ? `<br><a data-open="${esc(r.cover_letter)}">cover letter</a>` : ''}${r.screenshot ? `<br><a data-open="${esc(r.screenshot)}">screenshot</a>` : ''}</td>
+		<td>${esc(r.notes)}${r.check ? `<div class="${r.check.startsWith('All required') ? 'checkok' : 'checkwarn'}">${r.check.startsWith('All required') ? '✓ ' : '⚠ '}${esc(r.check)}</div>` : ''}${r.unanswered_questions ? `<div class="hint">Waiting on: ${esc(r.unanswered_questions)}</div>` : ''}</td></tr>`;
 	}).join('') : '<tr><td colspan="5" class="empty">No applications yet.</td></tr>';
 	document.querySelectorAll('[data-open]').forEach(a => a.onclick = () => call('open_path', a.dataset.open));
 	document.querySelectorAll('[data-url]').forEach(a => a.onclick = () => call('open_path', a.dataset.url));

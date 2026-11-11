@@ -689,6 +689,13 @@ class Runner:
 			status = 'needs_input'
 		if update and status == 'failed':  # a job that was filled before stays the user's to finish
 			status = 'needs_input'
+		check: dict = {}
+		if status != 'skipped' and tabs and self.browser is not None:
+			try:  # what the user will find in the form: empty required fields, errors, and a screenshot of it
+				shot = sub('screenshots') / f'{datetime.now():%Y-%m-%d_%H%M%S}_{documents.slug(job.get("company") or "job")}.png'
+				check = audit.final_check(self._ws(), tabs[-1], shot)
+			except Exception as e:
+				logger.warning('final check failed: %s', e)
 		if status == 'skipped':
 			self._close_tabs(tabs)
 			tabs = []
@@ -707,6 +714,8 @@ class Runner:
 			'cover_letter': docs.get('cover_letter_pdf', ''),
 			'unanswered_questions': ' | '.join(unique.values()),
 			'notes': (outcome.notes if outcome else '') or error,
+			'check': check.get('summary', ''),
+			'screenshot': check.get('screenshot', ''),
 		}
 		if update:
 			row = self.tracker.update(job['url'], **values)

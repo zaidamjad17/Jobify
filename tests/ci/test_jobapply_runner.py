@@ -666,3 +666,27 @@ def test_an_agent_repeating_itself_is_stopped_and_the_job_parked(tmp_path, monke
 	finally:
 		r.stop()
 		asyncio.run(r.close_browser())
+
+
+CHECK_FORM = """<!doctype html><html><body><form>
+<label>Full name <input name=name value="Ada Lovelace" required></label>
+<label for=p>Phone *</label><input id=p name=phone>
+<label>Portfolio <input name=site></label>
+<div role=alert>Please enter a valid phone number</div>
+<button type=submit id=submit>Submit application</button></form></body></html>"""
+
+
+def test_a_finished_job_lists_empty_required_fields_and_errors_and_keeps_a_screenshot(tmp_path, monkeypatch):
+	"""Final check: History says whether the form is really ready (required fields still empty, error messages on the
+	page) and keeps a screenshot of the form as JobApply left it."""
+	r, urls, seen, events, profile = _runner_with(tmp_path, monkeypatch, {'form.html': CHECK_FORM}, _filled('x'))
+	try:
+		r.start()
+		r._thread.join(120)
+		row = runner_mod.tracker().rows()[0]
+		assert 'Phone' in row.check and 'Portfolio' not in row.check and 'Full name' not in row.check
+		assert 'Please enter a valid phone number' in row.check
+		assert row.screenshot.endswith('.png') and open(row.screenshot, 'rb').read(4) == b'\x89PNG'
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())
