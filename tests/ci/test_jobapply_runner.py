@@ -775,3 +775,54 @@ def test_a_browser_crash_mid_job_restarts_the_browser_and_runs_the_job_again(tmp
 	r._thread.join(30)
 	assert len(runs) == 2 and len(starts) >= 3  # loop start, the job, the restart
 	assert [row.status for row in runner_mod.tracker().rows()] == ['filled']
+
+
+def test_preflight_asks_for_help_on_a_logged_out_board_and_skips_it_when_nobody_comes(tmp_path, monkeypatch):
+	"""Pre-flight: before searching, each board (and Gmail) is opened; a login page or a bot check alerts the user. A
+	board still blocked after the wait is left out of this run instead of being searched blind ('nothing new')."""
+	chrome = find_chrome() or pytest.skip('Chrome not installed')
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	monkeypatch.setattr(runner_mod, 'HELP_WAIT_S', 0.5)
+	(tmp_path / 'feed.html').write_text('<h1>Your feed</h1>', encoding='utf-8')
+	(tmp_path / 'login.html').write_text('<h1>Sign in</h1><input type=password>', encoding='utf-8')
+	(tmp_path / 'check.html').write_text('<h1>Verify you are human</h1>', encoding='utf-8')
+	monkeypatch.setattr(
+		runner_mod,
+		'PREFLIGHT',
+		{
+			'linkedin': ('LinkedIn', (tmp_path / 'login.html').as_uri()),
+			'indeed': ('Indeed', (tmp_path / 'check.html').as_uri()),
+			'lever': ('Lever', (tmp_path / 'feed.html').as_uri()),
+			'gmail': ('Gmail', (tmp_path / 'feed.html').as_uri()),
+		},
+	)
+	(tmp_path / 'p.md').write_text(PROFILE, encoding='utf-8')
+	settings = Settings(
+		profile_path=str(tmp_path / 'p.md'),
+		criteria_path=str(tmp_path / 'p.md'),
+		gemini_api_key='k',
+		boards=['linkedin', 'indeed', 'lever'],
+		browser_executable=chrome,
+	)
+	monkeypatch.setattr(runner_mod, 'agent_llm', lambda s, provider=None: None)
+	monkeypatch.setattr(runner_mod, 'writer_model', lambda m: None)
+	events: list[dict] = []
+	r = runner_mod.Runner(settings, events.append)
+	searched = []
+
+	async def search(board, llm, round_):
+		searched.append(board)
+		return []
+
+	monkeypatch.setattr(r, '_search', search)
+	try:
+		r.start()
+		r._thread.join(60)
+		reasons = [e['reason'] for e in events if e['kind'] == 'help']
+		assert any('LinkedIn' in x and 'log in' in x.lower() for x in reasons)
+		assert any('Indeed' in x and 'check' in x.lower() for x in reasons)
+		assert set(searched) == {'lever'}  # the blocked boards were left out
+		assert runner_mod.questions().open() == []  # pre-flight problems are not job questions
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import re
 import threading
@@ -41,6 +42,39 @@ CRASHED = re.compile(
 	r'browser is gone|browser\b.{0,40}\b(exited|crashed|closed)|no close frame|DevTools port|ConnectionClosed', re.I
 )
 SEARCH_MAX_STEPS, SEARCH_TIMEOUT_S = 40, 600
+# Pre-flight: a page per board (and Gmail) that shows whether the user is logged in and not blocked. Boards searched
+# through Google share its page, so one check covers them.
+GOOGLE_CHECK = 'https://www.google.com/search?q=software+engineer+jobs'
+PREFLIGHT: dict[str, tuple[str, str]] = {
+	'linkedin': ('LinkedIn', 'https://www.linkedin.com/feed/'),
+	'indeed': ('Indeed', 'https://www.indeed.com/'),
+	'greenhouse': ('Google search (Greenhouse)', GOOGLE_CHECK),
+	'lever': ('Google search (Lever)', GOOGLE_CHECK),
+	'ashby': ('Google search (Ashby)', GOOGLE_CHECK),
+	'wellfound': ('Wellfound', 'https://wellfound.com/jobs'),
+	'gmail': ('Gmail', 'https://mail.google.com/mail/u/0/'),
+}
+LOGIN_PAGE = re.compile(r'login|signin|sign-in|sign_in|authwall|checkpoint|ServiceLogin|/auth\b|/uas/', re.I)
+BOT_CHECK = re.compile(
+	r'captcha|verify you are (a )?human|unusual traffic|are you a robot|just a moment|security check|additional verification|/sorry/',
+	re.I,
+)
+PAGE_STATE_JS = (
+	"JSON.stringify({url: location.href, title: document.title, text: (document.body ? document.body.innerText : '')"
+	".slice(0, 3000), password: !!document.querySelector('input[type=password]')})"
+)
+
+
+def page_problem(state: dict, label: str) -> str | None:
+	"""What a pre-flight page shows: None when usable, else what the user has to do."""
+	where = f'{state.get("url", "")} {state.get("title", "")}'
+	if BOT_CHECK.search(where) or BOT_CHECK.search(state.get('text', '')[:1500]):
+		return f'{label} shows a bot check (captcha / "verify you are human"): solve it in the JobApply browser'
+	if state.get('password') or LOGIN_PAGE.search(state.get('url', '')):
+		return f'Log in to {label} in the JobApply browser'
+	return None
+
+
 SEARCH_BATCH = 10
 MAX_EMPTY_ROUNDS = 3  # a board is dropped after this many rounds in a row without a new job
 MAX_ROUNDS = 10  # result pages per board in one run
@@ -264,6 +298,9 @@ class Runner:
 		self._set_state('running' if self._resume.is_set() else 'paused')
 		queue: deque[dict] = deque() if self._refill_only else deque({'url': u, 'board': ''} for u in s.job_urls)
 		boards = [b for b in s.boards if b in BOARDS]
+		if boards and not self._refill_only:
+			blocked = await self._preflight(boards)
+			boards = [b for b in boards if b not in blocked]
 		rounds = dict.fromkeys(boards, 0)  # result pages searched per board
 		empty = dict.fromkeys(boards, 0)  # rounds in a row without a new job
 		board_index = 0
@@ -423,6 +460,58 @@ class Runner:
 		if self._agent_task is not None:
 			self._agent_task.cancel()
 
+	def _page_state(self, url: str, settle_s: float = 1.5) -> tuple[str, dict]:
+		"""Open url in a new tab and read where it ended up (after redirects): (tab, state)."""
+		from jobapply.cdp import CDP
+
+		with CDP(self._ws()) as cdp:
+			target = cdp.send('Target.createTarget', url=url)['targetId']
+			session = cdp.send('Target.attachToTarget', targetId=target, flatten=True)['sessionId']
+			state: dict = {}
+			deadline = time.monotonic() + 20
+			while time.monotonic() < deadline:
+				with contextlib.suppress(Exception):
+					ready = cdp.send('Runtime.evaluate', session, expression='document.readyState', returnByValue=True)
+					if ready['result'].get('value') == 'complete':
+						break
+				time.sleep(0.2)
+			time.sleep(settle_s)  # client-side redirects (to a login page) happen after load
+			with contextlib.suppress(Exception):
+				value = cdp.send('Runtime.evaluate', session, expression=PAGE_STATE_JS, returnByValue=True)['result']['value']
+				state = json.loads(value)
+			return target, state
+
+	async def _preflight(self, boards: list[str]) -> set[str]:
+		"""Before searching: each board's page (and Gmail) must be logged in and free of bot checks. Ask the user to
+		fix what is not; boards still blocked after the wait are left out of this run. Returns those boards."""
+		if self.browser is None or not getattr(self.browser, 'name', None):
+			return set()
+		checks: dict[str, list[str]] = {}  # url -> the boards (or 'gmail') it covers
+		for name in [*boards, 'gmail']:
+			if name in PREFLIGHT:
+				checks.setdefault(PREFLIGHT[name][1], []).append(name)
+		blocked: set[str] = set()
+		self._log('Checking that you are logged in and not blocked on the boards and Gmail...')
+		for url, names in checks.items():
+			label = ' / '.join(dict.fromkeys(PREFLIGHT[n][0] for n in names))
+			tab, state = await asyncio.to_thread(self._page_state, url)
+			problem = page_problem(state, label)
+			if problem:
+				done = await self._alert_and_wait(problem, 'preflight', url, tab)
+				if done:  # look again: still blocked means the board is skipped
+					await asyncio.to_thread(self._close_tabs, [tab])
+					tab, state = await asyncio.to_thread(self._page_state, url, 0.5)
+					problem = page_problem(state, label)
+			await asyncio.to_thread(self._close_tabs, [tab])
+			if problem:
+				searchable = [n for n in names if n != 'gmail']
+				blocked.update(searchable)
+				if searchable:
+					self._log(f'Skipping {label} this run: {problem.split(":")[0]}.', 'error')
+				else:
+					self._log('Gmail is not ready: email applications will ask you to log in when they need it.', 'error')
+		return blocked
+
 	async def _search(self, board: str, llm: Any, round_: int = 1) -> list[dict]:
 		from browser_use import Tools
 
@@ -523,9 +612,8 @@ class Runner:
 
 		return tools
 
-	async def _need_human(self, url: str, reason: str, kind: str, asked: list[str]) -> str:
-		"""Alert the user (sound, the tab in front), wait HELP_WAIT_S; then continue, or park the job."""
-		tab = getattr(self.browser, '_agent_tab', '') or ''
+	async def _alert_and_wait(self, reason: str, kind: str, url: str, tab: str) -> bool:
+		"""Alert the user (sound, banner, the tab in front) and wait HELP_WAIT_S for "I did it, continue"."""
 		self.help = {'reason': reason, 'need': kind, 'url': url, 'tab': tab, 'company': self.current.get('company', '')}
 		self._help_done.clear()
 		self._log(f'Needs you: {reason}', 'error')
@@ -533,10 +621,15 @@ class Runner:
 		if tab:
 			await asyncio.to_thread(self.focus_tab, tab)
 		try:
-			done = await asyncio.to_thread(self._help_done.wait, HELP_WAIT_S)
+			return await asyncio.to_thread(self._help_done.wait, HELP_WAIT_S)
 		finally:
 			self.help = None
 			self._emit('help_end')
+
+	async def _need_human(self, url: str, reason: str, kind: str, asked: list[str]) -> str:
+		"""need_human: alert and wait; then the agent continues, or the job is parked in Questions."""
+		tab = getattr(self.browser, '_agent_tab', '') or ''
+		done = await self._alert_and_wait(reason, kind, url, tab)
 		if done:
 			return 'The user says it is done. Check the page now and continue the application.'
 		q = self.questions.ask(
