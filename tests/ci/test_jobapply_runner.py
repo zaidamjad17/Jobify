@@ -4,6 +4,7 @@ One pasted job: the agent writes the documents, sends a question, tries to press
 finishes. The row is logged as needs_input, the PDFs exist, the question is open, and the tab is unlocked for the user."""
 
 import asyncio
+import threading
 import time
 
 import pytest
@@ -510,3 +511,392 @@ def test_a_skipped_question_is_not_asked_again_and_skips_alone_do_not_start_a_re
 	assert 'chose not to answer' in ask('What is your Polish level?')
 	assert asked == [] and [q.question for q in qs.open()] == []
 	assert 'Polish level?' in runner_mod.refill_task(url, t.latest(url))
+
+
+CAPTCHA_JOB = """<!doctype html><html><body><h1>Verify you are human</h1>
+<form><input id=salary><button type=submit id=submit onclick="window.clicks++">Submit application</button></form>
+<script>window.clicks = 0;</script></body></html>"""
+
+
+def _runner_with(tmp_path, monkeypatch, pages: dict[str, str], *turns, **settings_extra):
+	chrome = find_chrome() or pytest.skip('Chrome not installed')
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	urls = []
+	for name, html in pages.items():
+		path = tmp_path / name
+		path.write_text(html, encoding='utf-8')
+		urls.append(path.as_uri())
+	profile = tmp_path / 'profile.md'
+	profile.write_text(PROFILE, encoding='utf-8')
+	settings = Settings(
+		profile_path=str(profile),
+		criteria_path=str(profile),
+		gemini_api_key='k',
+		boards=[],
+		job_urls=urls,
+		browser_executable=chrome,
+		**settings_extra,
+	)
+	model, seen = script(*turns)
+	monkeypatch.setattr(runner_mod, 'agent_llm', lambda s: model)
+	monkeypatch.setattr(runner_mod, 'writer_model', lambda llm: None)
+	events: list[dict] = []
+	return runner_mod.Runner(settings, events.append), urls, seen, events, profile
+
+
+def _filled(url):
+	return ('finish', {'success': True, 'result': {'status': 'filled', 'company': 'Acme', 'title': 'Engineer', 'url': url}})
+
+
+def test_a_captcha_the_user_misses_parks_the_job_and_the_loop_goes_on(tmp_path, monkeypatch):
+	"""Human handoff: the agent calls need_human (captcha); the app plays a sound and brings the tab up. Nobody answers
+	within the wait, so the job is parked in Questions (Done brings the agent back) and the next job runs."""
+	monkeypatch.setattr(runner_mod, 'HELP_WAIT_S', 0.5)
+	r, urls, seen, events, profile = _runner_with(
+		tmp_path,
+		monkeypatch,
+		{'captcha.html': CAPTCHA_JOB, 'job.html': JOB},
+		('need_human', {'reason': 'Captcha on Acme: please solve it', 'kind': 'captcha'}),
+		('finish', {'success': True, 'result': {'status': 'needs_input', 'company': 'Acme', 'url': 'x', 'notes': 'captcha'}}),
+		('finish', {'success': True, 'result': {'status': 'filled', 'company': 'Beta', 'title': 'Dev', 'url': 'y'}}),
+	)
+	try:
+		r.start()
+		r._thread.join(120)
+		assert 'parked' in str(seen[1][-1]).lower()
+		help_events = [e for e in events if e['kind'] == 'help']
+		assert help_events and help_events[0]['reason'] == 'Captcha on Acme: please solve it' and help_events[0]['sound']
+		rows = runner_mod.tracker().rows()
+		assert [(row.status, row.unanswered_questions) for row in rows] == [
+			('needs_input', 'Captcha on Acme: please solve it'),
+			('filled', ''),
+		]
+		parked = runner_mod.questions().open()
+		assert [(q.question, q.field_hint) for q in parked] == [('Captcha on Acme: please solve it', 'help')]
+		runner_mod.questions().dismiss(parked[0].id)  # Done: the user solved it
+		assert runner_mod.ready_jobs() == [urls[0]]
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())
+
+
+def test_the_user_answering_the_handoff_in_time_continues_the_same_job(tmp_path, monkeypatch):
+	monkeypatch.setattr(runner_mod, 'HELP_WAIT_S', 30)
+	r, urls, seen, events, profile = _runner_with(
+		tmp_path,
+		monkeypatch,
+		{'captcha.html': CAPTCHA_JOB},
+		('need_human', {'reason': 'Captcha on Acme', 'kind': 'captcha'}),
+		_filled('x'),
+	)
+	r.on_event = lambda e: (events.append(e), e['kind'] == 'help' and threading.Timer(0.3, r.help_done).start())
+	try:
+		r.start()
+		r._thread.join(120)
+		assert 'user says it is done' in str(seen[1][-1]).lower()
+		assert [row.status for row in runner_mod.tracker().rows()] == ['filled']
+		assert runner_mod.questions().open() == []
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())
+
+
+SLOW = "import time; time.sleep(2); print('working')"
+
+
+def test_take_over_pauses_the_agent_and_continue_finishes_that_job_first(tmp_path, monkeypatch):
+	"""Take over: the agent stops after its current step so the user has the browser; the job waits. Continue: that job
+	is finished first, then the loop goes on."""
+	r, urls, seen, events, profile = _runner_with(
+		tmp_path,
+		monkeypatch,
+		{'job.html': JOB, 'next.html': JOB},
+		('python', {'code': SLOW}),
+		_filled('x'),  # after Continue: the interrupted job, finished
+		_filled('y'),  # then the next job
+	)
+	try:
+		r.start()
+		for _ in range(200):
+			if r.current.get('phase') == 'apply' and r._agent_task is not None:
+				break
+			time.sleep(0.05)
+		time.sleep(0.5)
+		assert r.take_over()
+		for _ in range(200):
+			if r.state == 'held':
+				break
+			time.sleep(0.05)
+		assert r.state == 'held'
+		time.sleep(0.5)
+		rows = runner_mod.tracker().rows()
+		assert [row.status for row in rows] == ['needs_input'] and 'took over' in rows[0].notes
+		r.resume()
+		r._thread.join(120)
+		rows = runner_mod.tracker().rows()
+		assert [(row.url, row.status) for row in rows] == [(urls[0], 'filled'), (urls[1], 'filled')]
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())
+
+
+def test_an_agent_repeating_itself_is_stopped_and_the_job_parked(tmp_path, monkeypatch):
+	"""Stuck detector: the same step over and over (a button that does nothing) used to burn up to 90 steps and the
+	AI cost. After a few identical steps the job is parked with the reason, and the loop moves on."""
+	monkeypatch.setattr(runner_mod, 'STUCK_REPEATS', 3)
+	same = ('python', {'code': "print(js('1'))"})
+	r, urls, seen, events, profile = _runner_with(
+		tmp_path,
+		monkeypatch,
+		{'job.html': JOB, 'next.html': JOB},
+		same,
+		same,
+		same,
+		same,
+		same,
+		_filled('y'),
+	)
+	try:
+		r.start()
+		r._thread.join(120)
+		rows = runner_mod.tracker().rows()
+		assert [row.status for row in rows] == ['needs_input', 'filled']
+		assert 'stuck' in rows[0].notes.lower()
+		assert [q.field_hint for q in runner_mod.questions().open()] == ['help']
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())
+
+
+CHECK_FORM = """<!doctype html><html><body><form>
+<label>Full name <input name=name value="Ada Lovelace" required></label>
+<label for=p>Phone *</label><input id=p name=phone>
+<label>Portfolio <input name=site></label>
+<div role=alert>Please enter a valid phone number</div>
+<button type=submit id=submit>Submit application</button></form></body></html>"""
+
+
+def test_a_finished_job_lists_empty_required_fields_and_errors_and_keeps_a_screenshot(tmp_path, monkeypatch):
+	"""Final check: History says whether the form is really ready (required fields still empty, error messages on the
+	page) and keeps a screenshot of the form as JobApply left it."""
+	r, urls, seen, events, profile = _runner_with(tmp_path, monkeypatch, {'form.html': CHECK_FORM}, _filled('x'))
+	try:
+		r.start()
+		r._thread.join(120)
+		row = runner_mod.tracker().rows()[0]
+		assert 'Phone' in row.check and 'Portfolio' not in row.check and 'Full name' not in row.check
+		assert 'Please enter a valid phone number' in row.check
+		assert row.screenshot.endswith('.png') and open(row.screenshot, 'rb').read(4) == b'\x89PNG'
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())
+
+
+def test_a_busy_model_falls_back_to_the_backup_model(tmp_path, monkeypatch):
+	"""Live run: Google answered 503 for minutes, so every job failed. With a backup model set, a job whose model is
+	still busy after the retries runs on the backup instead."""
+	from pydantic_ai.exceptions import ModelHTTPError
+
+	chrome = find_chrome() or pytest.skip('Chrome not installed')
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	monkeypatch.setattr(runner_mod, 'RETRY_WAITS_S', (0.1,))
+	job = tmp_path / 'job.html'
+	job.write_text(JOB, encoding='utf-8')
+	(tmp_path / 'p.md').write_text(PROFILE, encoding='utf-8')
+	settings = Settings(
+		profile_path=str(tmp_path / 'p.md'),
+		criteria_path=str(tmp_path / 'p.md'),
+		gemini_api_key='k',
+		openai_api_key='o',
+		backup_provider='openai',
+		boards=[],
+		job_urls=[job.as_uri()],
+		browser_executable=chrome,
+	)
+
+	def busy(messages, info):
+		raise ModelHTTPError(503, 'gemini-x', {'error': {'code': 503, 'status': 'UNAVAILABLE'}})
+
+	backup, _ = script(_filled(job.as_uri()))
+	used = []
+
+	def llm(s, provider=None):
+		used.append(provider or s.provider)
+		return backup if provider == 'openai' else FunctionModel(busy)
+
+	monkeypatch.setattr(runner_mod, 'agent_llm', llm)
+	monkeypatch.setattr(runner_mod, 'writer_model', lambda m: None)
+	events = []
+	r = runner_mod.Runner(settings, events.append)
+	try:
+		r.start()
+		r._thread.join(120)
+		assert [row.status for row in runner_mod.tracker().rows()] == ['filled']
+		assert 'openai' in used and any('backup' in e.get('text', '') for e in events)
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())
+
+
+def test_a_browser_crash_mid_job_restarts_the_browser_and_runs_the_job_again(tmp_path, monkeypatch):
+	"""A crashed or closed browser failed the job. The app starts the browser again and retries that job once."""
+	from types import SimpleNamespace
+
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	(tmp_path / 'p.md').write_text(PROFILE, encoding='utf-8')
+	settings = Settings(
+		profile_path=str(tmp_path / 'p.md'),
+		criteria_path=str(tmp_path / 'p.md'),
+		gemini_api_key='k',
+		boards=[],
+		job_urls=['https://jobs.lever.co/acme/1'],
+	)
+	monkeypatch.setattr(runner_mod, 'agent_llm', lambda s, provider=None: None)
+	monkeypatch.setattr(runner_mod, 'writer_model', lambda m: None)
+	r = runner_mod.Runner(settings, lambda e: None)
+	starts, runs = [], []
+
+	async def start_browser():
+		starts.append(1)
+
+	async def run_agent(task, schema, tools, max_steps, timeout):
+		runs.append(task)
+		if len(runs) == 1:
+			return SimpleNamespace(status='error', error='The browser is gone: chrome.exe exited', structured_output=None)
+		return SimpleNamespace(
+			status='completed', error=None, structured_output=runner_mod.JobOutcome(status='filled', company='Acme')
+		)
+
+	monkeypatch.setattr(r, '_start_browser', start_browser)
+	monkeypatch.setattr(r, '_run_agent', run_agent)
+	monkeypatch.setattr(r, '_open_tab', lambda url: 'T1')
+	monkeypatch.setattr(r, '_finish_checks', lambda *a, **k: {}, raising=False)
+	r.start()
+	r._thread.join(30)
+	assert len(runs) == 2 and len(starts) >= 3  # loop start, the job, the restart
+	assert [row.status for row in runner_mod.tracker().rows()] == ['filled']
+
+
+def test_preflight_asks_for_help_on_a_logged_out_board_and_skips_it_when_nobody_comes(tmp_path, monkeypatch):
+	"""Pre-flight: before searching, each board (and Gmail) is opened; a login page or a bot check alerts the user. A
+	board still blocked after the wait is left out of this run instead of being searched blind ('nothing new')."""
+	chrome = find_chrome() or pytest.skip('Chrome not installed')
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	monkeypatch.setattr(runner_mod, 'HELP_WAIT_S', 0.5)
+	(tmp_path / 'feed.html').write_text('<h1>Your feed</h1>', encoding='utf-8')
+	(tmp_path / 'login.html').write_text('<h1>Sign in</h1><input type=password>', encoding='utf-8')
+	(tmp_path / 'check.html').write_text('<h1>Verify you are human</h1>', encoding='utf-8')
+	monkeypatch.setattr(
+		runner_mod,
+		'PREFLIGHT',
+		{
+			'linkedin': ('LinkedIn', (tmp_path / 'login.html').as_uri()),
+			'indeed': ('Indeed', (tmp_path / 'check.html').as_uri()),
+			'lever': ('Lever', (tmp_path / 'feed.html').as_uri()),
+			'gmail': ('Gmail', (tmp_path / 'feed.html').as_uri()),
+		},
+	)
+	(tmp_path / 'p.md').write_text(PROFILE, encoding='utf-8')
+	settings = Settings(
+		profile_path=str(tmp_path / 'p.md'),
+		criteria_path=str(tmp_path / 'p.md'),
+		gemini_api_key='k',
+		boards=['linkedin', 'indeed', 'lever'],
+		browser_executable=chrome,
+	)
+	monkeypatch.setattr(runner_mod, 'agent_llm', lambda s, provider=None: None)
+	monkeypatch.setattr(runner_mod, 'writer_model', lambda m: None)
+	events: list[dict] = []
+	r = runner_mod.Runner(settings, events.append)
+	searched = []
+
+	async def search(board, llm, round_):
+		searched.append(board)
+		return []
+
+	monkeypatch.setattr(r, '_search', search)
+	try:
+		r.start()
+		r._thread.join(60)
+		reasons = [e['reason'] for e in events if e['kind'] == 'help']
+		assert any('LinkedIn' in x and 'log in' in x.lower() for x in reasons)
+		assert any('Indeed' in x and 'check' in x.lower() for x in reasons)
+		assert set(searched) == {'lever'}  # the blocked boards were left out
+		assert runner_mod.questions().open() == []  # pre-flight problems are not job questions
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())
+
+
+def test_the_loop_holds_when_too_many_filled_tabs_wait_for_review(tmp_path, monkeypatch):
+	"""Review tab limit: with max_review_tabs filled tabs open and not yet submitted, the loop stops and asks the user to
+	review; Continue after marking one submitted lets it go on. The day ends with a summary."""
+	r, urls, seen, events, profile = _runner_with(
+		tmp_path,
+		monkeypatch,
+		{'job.html': JOB, 'next.html': JOB},
+		_filled('x'),
+		_filled('y'),
+		max_review_tabs=1,
+	)
+	try:
+		r.start()
+		for _ in range(300):
+			if r.state == 'held':
+				break
+			time.sleep(0.05)
+		assert r.state == 'held'
+		assert any(e['kind'] == 'help' and 'review' in e['reason'].lower() for e in events)
+		assert [row.status for row in runner_mod.tracker().rows()] == ['filled']
+		runner_mod.tracker().update(urls[0], status='submitted')
+		r.resume()
+		r._thread.join(120)
+		assert [row.status for row in runner_mod.tracker().rows()] == ['submitted', 'filled']
+		summary = [e['text'] for e in events if e['kind'] == 'log' and e['text'].startswith('Today:')]
+		assert summary and '1 ready to submit' in summary[-1] and '1 submitted' in summary[-1]
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())
+
+
+def test_take_over_during_a_search_holds_the_loop_instead_of_ending_it(tmp_path, monkeypatch):
+	"""Codex review: Take over while a board was being searched cancelled the search, and the Interrupted error ended the
+	whole loop. The loop now holds; Continue searches that board again."""
+	chrome = find_chrome() or pytest.skip('Chrome not installed')
+	monkeypatch.setenv('JOBAPPLY_HOME', str(tmp_path / 'home'))
+	(tmp_path / 'ok.html').write_text('<h1>Jobs</h1>', encoding='utf-8')
+	ok = (tmp_path / 'ok.html').as_uri()
+	monkeypatch.setattr(runner_mod, 'PREFLIGHT', {'lever': ('Lever', ok), 'gmail': ('Gmail', ok)})
+	monkeypatch.setattr(runner_mod, 'BOARDS', {'lever': ('Lever', ok)})
+	monkeypatch.setattr(runner_mod, 'MAX_EMPTY_ROUNDS', 1)
+	(tmp_path / 'p.md').write_text(PROFILE, encoding='utf-8')
+	settings = Settings(
+		profile_path=str(tmp_path / 'p.md'),
+		criteria_path=str(tmp_path / 'p.md'),
+		gemini_api_key='k',
+		boards=['lever'],
+		browser_executable=chrome,
+	)
+	model, seen = script(('python', {'code': SLOW}), ('finish', {'success': True, 'result': {'jobs': []}}))
+	monkeypatch.setattr(runner_mod, 'agent_llm', lambda s, provider=None: model)
+	monkeypatch.setattr(runner_mod, 'writer_model', lambda m: None)
+	events: list[dict] = []
+	r = runner_mod.Runner(settings, events.append)
+	try:
+		r.start()
+		for _ in range(300):
+			if r.current.get('phase') == 'search' and r._agent_task is not None:
+				break
+			time.sleep(0.05)
+		time.sleep(0.5)
+		assert r.take_over()
+		time.sleep(1.5)
+		assert r.state == 'held' and r._thread.is_alive()
+		r.resume()
+		r._thread.join(60)
+		logs = [e['text'] for e in events if e['kind'] == 'log']
+		assert any('Loop finished' in x or 'No more new jobs' in x for x in logs)
+		assert not any(x.startswith('Stopped:') for x in logs)
+	finally:
+		r.stop()
+		asyncio.run(r.close_browser())

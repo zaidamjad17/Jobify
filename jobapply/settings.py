@@ -37,6 +37,7 @@ class Settings:
 	resume_template_path: str = ''  # '' = the built-in template
 	cover_letter_tone: str = 'professional, warm and concise (about 200 words)'
 	provider: str = 'gemini'
+	backup_provider: str = ''  # used when the main model is still busy after the retries ('' = none)
 	gemini_model: str = 'gemini-3.5-flash'
 	gemini_api_key: str = ''
 	openai_model: str = 'gpt-6-luna'
@@ -44,6 +45,8 @@ class Settings:
 	chatgpt: ChatGPTLogin = field(default_factory=ChatGPTLogin)
 	boards: list[str] = field(default_factory=lambda: list(BOARDS))
 	daily_cap: int = 20
+	max_review_tabs: int = 15  # the loop holds when this many filled tabs wait for the user's review
+	max_job_age_days: int = 14  # postings older than this are skipped; the newest are applied to first
 	job_urls: list[str] = field(default_factory=list)  # pasted URLs, applied to before any board search
 	browser_executable: str = ''  # '' = Chrome or Edge, whichever is installed
 
@@ -73,8 +76,16 @@ class Settings:
 	def validate(self) -> None:
 		if self.provider not in PROVIDERS:
 			raise ValueError(f'provider must be one of {", ".join(PROVIDERS)}, not {self.provider!r}')
+		if self.backup_provider not in ('', *PROVIDERS):
+			raise ValueError(f'backup_provider must be empty or one of {", ".join(PROVIDERS)}, not {self.backup_provider!r}')
+		if self.backup_provider == self.provider:
+			self.backup_provider = ''
 		if isinstance(self.daily_cap, bool) or not isinstance(self.daily_cap, int) or not 1 <= self.daily_cap <= 200:
 			raise ValueError(f'daily_cap must be a whole number from 1 to 200, not {self.daily_cap!r}')
+		for name, low, high in (('max_review_tabs', 1, 100), ('max_job_age_days', 1, 365)):
+			value = getattr(self, name)
+			if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+				raise ValueError(f'{name} must be a whole number from {low} to {high}, not {value!r}')
 		unknown = [b for b in self.boards if b not in BOARDS]
 		if unknown:
 			raise ValueError(f'unknown job boards: {", ".join(unknown)}')

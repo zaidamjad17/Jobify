@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import re
 import threading
@@ -36,11 +37,80 @@ RETRY_WAITS_S = (20.0, 60.0)
 BUSY = re.compile(
 	r'ModelUnavailableError|ModelRateLimitError|ModelServerError|ModelConnectionError|\b(429|500|502|503|504)\b|overloaded|high demand|RESOURCE_EXHAUSTED|UNAVAILABLE'
 )
+# The browser crashed or was closed under a running job: start it again and run the job once more
+CRASHED = re.compile(
+	r'browser is gone|browser\b.{0,40}\b(exited|crashed|closed)|no close frame|DevTools port|ConnectionClosed', re.I
+)
 SEARCH_MAX_STEPS, SEARCH_TIMEOUT_S = 40, 600
+# Pre-flight: a page per board (and Gmail) that shows whether the user is logged in and not blocked. Boards searched
+# through Google share its page, so one check covers them.
+GOOGLE_CHECK = 'https://www.google.com/search?q=software+engineer+jobs'
+PREFLIGHT: dict[str, tuple[str, str]] = {
+	'linkedin': ('LinkedIn', 'https://www.linkedin.com/feed/'),
+	'indeed': ('Indeed', 'https://www.indeed.com/'),
+	'greenhouse': ('Google search (Greenhouse)', GOOGLE_CHECK),
+	'lever': ('Google search (Lever)', GOOGLE_CHECK),
+	'ashby': ('Google search (Ashby)', GOOGLE_CHECK),
+	'wellfound': ('Wellfound', 'https://wellfound.com/jobs'),
+	'gmail': ('Gmail', 'https://mail.google.com/mail/u/0/'),
+}
+LOGIN_PAGE = re.compile(r'login|signin|sign-in|sign_in|authwall|checkpoint|ServiceLogin|/auth\b|/uas/', re.I)
+BOT_CHECK = re.compile(
+	r'captcha|verify you are (a )?human|unusual traffic|are you a robot|just a moment|security check|additional verification|/sorry/',
+	re.I,
+)
+PAGE_STATE_JS = (
+	"JSON.stringify({url: location.href, title: document.title, text: (document.body ? document.body.innerText : '')"
+	".slice(0, 3000), password: !!document.querySelector('input[type=password]')})"
+)
+
+
+def page_problem(state: dict, label: str) -> str | None:
+	"""What a pre-flight page shows: None when usable, else what the user has to do."""
+	where = f'{state.get("url", "")} {state.get("title", "")}'
+	if BOT_CHECK.search(where) or BOT_CHECK.search(state.get('text', '')[:1500]):
+		return f'{label} shows a bot check (captcha / "verify you are human"): solve it in the JobApply browser'
+	if state.get('password') or LOGIN_PAGE.search(state.get('url', '')):
+		return f'Log in to {label} in the JobApply browser'
+	return None
+
+
 SEARCH_BATCH = 10
 MAX_EMPTY_ROUNDS = 3  # a board is dropped after this many rounds in a row without a new job
 MAX_ROUNDS = 10  # result pages per board in one run
 COUNTED_OUTCOMES = ('filled', 'email_drafted', 'needs_input')
+HELP_WAIT_S = 60  # how long the agent waits for the user on a captcha / login before it parks the job
+STUCK_REPEATS = 5  # the same step this many times in a row: the agent is stuck, the job is parked
+HELP_KINDS = ('login', 'help')  # questions closed with Done (no answer): the user did something in the browser
+
+
+class Interrupted(Exception):
+	"""The agent's run was stopped on purpose: 'hold' (the user took over) or 'stuck' (repeating itself)."""
+
+	def __init__(self, reason: str):
+		super().__init__(reason)
+		self.reason = reason
+
+
+class StepWatch(logging.Handler):
+	"""Sees each agent step (browser_use logs 'step N: <first code line> [-> error]') and calls on_stuck when the same
+	step repeats STUCK_REPEATS times in a row."""
+
+	def __init__(self, on_stuck: Callable[[str], None]):
+		super().__init__(logging.INFO)
+		self.on_stuck = on_stuck
+		self.last: list[str] = []
+		self.fired = False
+
+	def emit(self, record: logging.LogRecord) -> None:
+		message = record.getMessage()
+		if not message.startswith('step ') or ': ' not in message:
+			return
+		step = ' '.join(message.split(': ', 1)[1].split())
+		self.last = [*self.last[-(STUCK_REPEATS - 1) :], step] if STUCK_REPEATS > 1 else [step]
+		if not self.fired and len(self.last) >= STUCK_REPEATS and len(set(self.last)) == 1:
+			self.fired = True
+			self.on_stuck(step)
 
 
 def tracker() -> Tracker:
@@ -56,7 +126,7 @@ DISMISSED = '(dismissed)'
 
 def _acted(q: Question) -> bool:
 	"""Answered, or a login request the user marked Done: something the agent can now continue with."""
-	return bool(q.answer) and (q.answer != DISMISSED or q.field_hint == 'login')
+	return bool(q.answer) and (q.answer != DISMISSED or q.field_hint in HELP_KINDS)
 
 
 def _job_questions(row: Row) -> dict[str, list[Question]]:
@@ -99,6 +169,15 @@ def refill_task(url: str, row: Row) -> str:
 	return REFILL_TASK.replace('{url}', url).replace('{questions}', answered).replace('{skipped}', skipped)
 
 
+def freshest_first(jobs: list[dict], max_age_days: int) -> list[dict]:
+	"""Newest postings first (they get the most replies); older than max_age_days dropped; unknown age last."""
+	kept = [j for j in jobs if j.get('days') is None or j['days'] <= max_age_days]
+	return sorted(kept, key=lambda j: (j.get('days') is None, j.get('days') or 0))
+
+
+REVIEW_STATUSES = ('filled', 'email_drafted', 'needs_input')
+
+
 def build_rules(profile: str, criteria: str) -> str:
 	return RULES.replace('{profile}', profile).replace('{criteria}', criteria)  # the files may hold braces
 
@@ -121,6 +200,10 @@ class Runner:
 		self._refills: deque[str] = deque()  # jobs to finish with the user's answers, before any new job
 		self._refills_lock = threading.Lock()
 		self._refill_only = False
+		self._agent_task: asyncio.Task | None = None  # the agent run in progress (take_over / stuck cancel it)
+		self._interrupt: str | None = None  # why it was cancelled: 'hold' or 'stuck'
+		self._help_done = threading.Event()  # the user clicked "I did it, continue" on a handoff
+		self.help: dict[str, str] | None = None  # the handoff waiting for the user, for the UI
 
 	# control (any thread)
 
@@ -136,11 +219,11 @@ class Runner:
 		self._thread = threading.Thread(target=self._main, daemon=True, name='jobapply-runner')
 		self._thread.start()
 
-	def request_refill(self, url: str) -> None:
+	def request_refill(self, url: str, first: bool = False) -> None:
 		"""Go back to this job's application and fill what the user's answers now cover (next, before new jobs)."""
 		with self._refills_lock:
 			if all(job_key(u) != job_key(url) for u in self._refills):
-				self._refills.append(url)
+				(self._refills.appendleft if first else self._refills.append)(url)
 
 	def _next_refill(self) -> str | None:
 		with self._refills_lock:
@@ -154,8 +237,24 @@ class Runner:
 
 	def resume(self) -> None:
 		self._resume.set()
-		if self.state == 'paused':
+		if self.state in ('paused', 'held'):
 			self._set_state('running')
+
+	def take_over(self) -> bool:
+		"""The user wants the browser: the agent stops after its current step, the job waits (it is finished first
+		after resume()), and the loop holds until resume()."""
+		if self.state not in ('running', 'starting'):
+			return False
+		self._resume.clear()
+		self._interrupt = 'hold'
+		self._set_state('held')
+		if self._loop and self._agent_task:
+			self._loop.call_soon_threadsafe(self._agent_task.cancel)
+		return True
+
+	def help_done(self) -> None:
+		"""The user finished what the agent asked for (captcha, login, code): the agent continues the job."""
+		self._help_done.set()
 
 	def stop(self) -> None:
 		"""Stops now: the job in progress is cancelled (its tab stays open). The browser stays open with its tabs."""
@@ -208,6 +307,9 @@ class Runner:
 		self._set_state('running' if self._resume.is_set() else 'paused')
 		queue: deque[dict] = deque() if self._refill_only else deque({'url': u, 'board': ''} for u in s.job_urls)
 		boards = [b for b in s.boards if b in BOARDS]
+		if boards and not self._refill_only:
+			blocked = await self._preflight(boards)
+			boards = [b for b in boards if b not in blocked]
 		rounds = dict.fromkeys(boards, 0)  # result pages searched per board
 		empty = dict.fromkeys(boards, 0)  # rounds in a row without a new job
 		board_index = 0
@@ -235,10 +337,15 @@ class Runner:
 				board_index += 1
 				rounds[board] += 1
 				found = await self._search(board, llm, rounds[board])
+				if found is None:  # interrupted (Take over): search this page again after Continue
+					rounds[board] -= 1
+					continue
 				fresh = [j for j in found if not self.tracker.seen(j['url'])]
 				empty[board] = 0 if fresh else empty[board] + 1
 				queue.extend(fresh)
 				continue
+			if await self._hold_for_review():
+				continue  # the user may have answered questions meanwhile: refills first
 			job = queue.popleft()
 			if self.tracker.seen(job['url']):
 				continue
@@ -248,6 +355,52 @@ class Runner:
 			if self._refill_only
 			else 'Loop finished. Your filled tabs stay open in the JobApply browser for review.'
 		)
+		self._log(self.summary())
+
+	def summary(self) -> str:
+		"""Today in one line: what is ready, what needs the user, what happened to the rest."""
+		today = datetime.now().strftime('%Y-%m-%d')
+		latest: dict[str, Row] = {}
+		for row in self.tracker.rows():
+			if row.url and row.date == today:
+				latest[job_key(row.url)] = row
+		count = lambda *statuses: sum(1 for r in latest.values() if r.status in statuses)  # noqa: E731
+		return (
+			f'Today: {count("filled", "email_drafted")} ready to submit, {count("needs_input")} need you, '
+			f'{count("submitted")} submitted, {count("skipped")} skipped, {count("failed")} failed.'
+		)
+
+	def review_waiting(self) -> int:
+		"""Filled jobs whose tabs are still open for the user (not yet marked submitted)."""
+		latest: dict[str, Row] = {}
+		for row in self.tracker.rows():
+			if row.url:
+				latest[job_key(row.url)] = row
+		pages = self.guard.pages if self.guard else {}
+		return sum(1 for r in latest.values() if r.status in REVIEW_STATUSES and any(t in pages for t in r.tab_id.split()))
+
+	async def _hold_for_review(self) -> bool:
+		"""Too many filled tabs wait for the user: hold the loop (banner + sound) until Continue. True if it held."""
+		waiting = self.review_waiting()
+		if waiting < self.settings.max_review_tabs:
+			return False
+		reason = (
+			f'{waiting} applications are waiting for your review. Submit them (then Submitted in History) or close '
+			'their tabs, then click Continue.'
+		)
+		self._resume.clear()
+		self._set_state('held')
+		self.help = {'reason': reason, 'need': 'review', 'url': '', 'tab': '', 'company': ''}
+		self._log(f'Needs you: {reason}', 'error')
+		self._emit('help', sound=True, wait_s=0, **self.help)
+		try:
+			await self._paused()
+		finally:
+			self.help = None
+			self._emit('help_end')
+		if self.state == 'held':
+			self._set_state('running')
+		return True
 
 	async def _paused(self) -> None:
 		await asyncio.to_thread(self._resume.wait)  # a threading.Event: pause()/resume() come from the UI thread
@@ -308,32 +461,119 @@ class Runner:
 				_daemon_cdp(self.browser.name, 'Target.closeTarget', targetId=t)
 
 	async def _run_agent(self, task: str, schema: Any, tools: Any, max_steps: int, timeout: float) -> Any:
+		"""Run the agent on the current tab: retried while the model is busy, then on the backup model if one is set.
+		Raises Interrupted for take_over() and the stuck watch."""
 		from browser_use import Agent
 
 		profile = read_text(self.settings.profile_path, 'profile')  # read per job: answers saved meanwhile count
 		criteria = read_text(self.settings.criteria_path, 'job criteria')
-		agent = Agent(
-			task,
-			llm=agent_llm(self.settings),
-			browser=self.browser,
-			tools=tools,
-			output_model_schema=schema,
-			extend_system_message=build_rules(profile, criteria),
-			workspace=sub('workspace'),
-		)
+		watch = StepWatch(self._stuck)
+		steps = logging.getLogger('browser_use.agent.loop')
+		if steps.getEffectiveLevel() > logging.INFO:
+			steps.setLevel(logging.INFO)
+		steps.addHandler(watch)
+		self._interrupt = None
+		backup = self.settings.backup_provider
+		plan: list[tuple[str | None, float | None]] = [(None, w) for w in RETRY_WAITS_S]
+		plan.append((None, None))  # the last try on the main model
+		if backup:
+			plan.append((backup, None))
 		try:
-			for wait in (*RETRY_WAITS_S, None):
-				result = await agent.run(max_steps=max_steps, timeout=timeout)
-				if wait is None or result.status != 'error' or not BUSY.search(result.error or ''):
+			result = None
+			for provider, wait in plan:
+				if provider:
+					self._log(f'The AI model is still busy; using the backup model ({provider}) for this job.', 'error')
+				agent = Agent(
+					task,
+					llm=agent_llm(self.settings, provider) if provider else agent_llm(self.settings),
+					browser=self.browser,
+					tools=tools,
+					output_model_schema=schema,
+					extend_system_message=build_rules(profile, criteria),
+					workspace=sub('workspace'),
+				)
+				try:
+					self._agent_task = asyncio.ensure_future(agent.run(max_steps=max_steps, timeout=timeout))
+					try:
+						result = await self._agent_task
+					except asyncio.CancelledError:
+						if self._interrupt:  # take_over() or the stuck watch, not a stop
+							raise Interrupted(self._interrupt) from None
+						raise
+					finally:
+						self._agent_task = None
+				finally:
+					with contextlib.suppress(Exception):
+						await agent.close()
+				if result.status != 'error' or not BUSY.search(result.error or ''):
 					return result
-				self._log(f'The AI model is busy; trying again in {wait:g}s.', 'error')
-				await asyncio.sleep(wait)
-			raise AssertionError('unreachable')
+				if wait is not None:
+					self._log(f'The AI model is busy; trying again in {wait:g}s.', 'error')
+					await asyncio.sleep(wait)
+			return result
 		finally:
-			with contextlib.suppress(Exception):
-				await agent.close()
+			steps.removeHandler(watch)
 
-	async def _search(self, board: str, llm: Any, round_: int = 1) -> list[dict]:
+	def _stuck(self, step: str) -> None:
+		self._log(f'The agent is repeating itself ("{step[:80]}"); parking this job.', 'error')
+		self._interrupt = 'stuck'
+		if self._agent_task is not None:
+			self._agent_task.cancel()
+
+	def _page_state(self, url: str, settle_s: float = 1.5) -> tuple[str, dict]:
+		"""Open url in a new tab and read where it ended up (after redirects): (tab, state)."""
+		from jobapply.cdp import CDP
+
+		with CDP(self._ws()) as cdp:
+			target = cdp.send('Target.createTarget', url=url)['targetId']
+			session = cdp.send('Target.attachToTarget', targetId=target, flatten=True)['sessionId']
+			state: dict = {}
+			deadline = time.monotonic() + 20
+			while time.monotonic() < deadline:
+				with contextlib.suppress(Exception):
+					ready = cdp.send('Runtime.evaluate', session, expression='document.readyState', returnByValue=True)
+					if ready['result'].get('value') == 'complete':
+						break
+				time.sleep(0.2)
+			time.sleep(settle_s)  # client-side redirects (to a login page) happen after load
+			with contextlib.suppress(Exception):
+				value = cdp.send('Runtime.evaluate', session, expression=PAGE_STATE_JS, returnByValue=True)['result']['value']
+				state = json.loads(value)
+			return target, state
+
+	async def _preflight(self, boards: list[str]) -> set[str]:
+		"""Before searching: each board's page (and Gmail) must be logged in and free of bot checks. Ask the user to
+		fix what is not; boards still blocked after the wait are left out of this run. Returns those boards."""
+		if self.browser is None or not getattr(self.browser, 'name', None):
+			return set()
+		checks: dict[str, list[str]] = {}  # url -> the boards (or 'gmail') it covers
+		for name in [*boards, 'gmail']:
+			if name in PREFLIGHT:
+				checks.setdefault(PREFLIGHT[name][1], []).append(name)
+		blocked: set[str] = set()
+		self._log('Checking that you are logged in and not blocked on the boards and Gmail...')
+		for url, names in checks.items():
+			label = ' / '.join(dict.fromkeys(PREFLIGHT[n][0] for n in names))
+			tab, state = await asyncio.to_thread(self._page_state, url)
+			problem = page_problem(state, label)
+			if problem:
+				done = await self._alert_and_wait(problem, 'preflight', url, tab)
+				if done:  # look again: still blocked means the board is skipped
+					await asyncio.to_thread(self._close_tabs, [tab])
+					tab, state = await asyncio.to_thread(self._page_state, url, 0.5)
+					problem = page_problem(state, label)
+			await asyncio.to_thread(self._close_tabs, [tab])
+			if problem:
+				searchable = [n for n in names if n != 'gmail']
+				blocked.update(searchable)
+				if searchable:
+					self._log(f'Skipping {label} this run: {problem.split(":")[0]}.', 'error')
+				else:
+					self._log('Gmail is not ready: email applications will ask you to log in when they need it.', 'error')
+		return blocked
+
+	async def _search(self, board: str, llm: Any, round_: int = 1) -> list[dict] | None:
+		"""The jobs found on this board's results page round_; None when the search was interrupted."""
 		from browser_use import Tools
 
 		label, start_url = BOARDS[board]
@@ -356,9 +596,16 @@ class Runner:
 			.replace('{start_url}', start_url)
 			.replace('{board_hint}', BOARD_HINTS.get(board, ''))
 			.replace('{round}', str(round_))
+			.replace('{age}', str(self.settings.max_job_age_days))
 		)
 		try:
 			result = await self._run_agent(task, FoundJobs, tools, SEARCH_MAX_STEPS, SEARCH_TIMEOUT_S)
+		except Interrupted as e:  # Take over (or stuck) during a search: no jobs from this round; the loop goes on
+			if e.reason == 'hold':
+				self._log(f'{label}: search paused; it runs again after Continue.', 'error')
+				return None  # searched again: the user interrupted it
+			self._log(f'{label}: the search got stuck on this page; moving on.', 'error')
+			return []  # counts as an empty round, so a page that always sticks is not retried forever
 		finally:
 			if self.guard:  # search tabs are not for review
 				await asyncio.to_thread(self._close_tabs, self.guard.tabs_since(mark))
@@ -366,7 +613,12 @@ class Runner:
 		found = output.jobs if output else []
 		if output and output.blocked:
 			self._log(f'{label}: {output.blocked}', 'error')
-		jobs = [{'url': j.url, 'board': j.board or board, 'company': j.company, 'title': j.title} for j in found if j.url]
+		jobs = [
+			{'url': j.url, 'board': j.board or board, 'company': j.company, 'title': j.title, 'days': j.posted_days_ago}
+			for j in found
+			if j.url
+		]
+		jobs = freshest_first(jobs, self.settings.max_job_age_days)
 		self._log(f'{label}: {len(jobs)} new job(s) found.' if jobs else f'{label}: nothing new.')
 		return jobs
 
@@ -423,7 +675,52 @@ class Runner:
 			self._emit('question', id=q.id, question=q.question)
 			return 'Sent to the user. Leave this field empty and continue with the rest of the form.'
 
+		@tools.action(
+			'Ask the user to do something only a person can: a captcha or "verify you are human", a login or sign-up, an '
+			'email or SMS code. kind: captcha | login | code | other. The app alerts them and waits; if they do not come '
+			'in time, the job is parked for later and you must finish.'
+		)
+		async def need_human(reason: str, kind: str = 'captcha') -> str:
+			return await self._need_human(url, reason, kind, asked)
+
 		return tools
+
+	async def _alert_and_wait(self, reason: str, kind: str, url: str, tab: str) -> bool:
+		"""Alert the user (sound, banner, the tab in front) and wait HELP_WAIT_S for "I did it, continue"."""
+		self.help = {'reason': reason, 'need': kind, 'url': url, 'tab': tab, 'company': self.current.get('company', '')}
+		self._help_done.clear()
+		self._log(f'Needs you: {reason}', 'error')
+		self._emit('help', sound=True, wait_s=HELP_WAIT_S, **self.help)
+		if tab:
+			await asyncio.to_thread(self.focus_tab, tab)
+		try:
+			return await asyncio.to_thread(self._help_done.wait, HELP_WAIT_S)
+		finally:
+			self.help = None
+			self._emit('help_end')
+
+	async def _need_human(self, url: str, reason: str, kind: str, asked: list[str]) -> str:
+		"""need_human: alert and wait; then the agent continues, or the job is parked in Questions."""
+		tab = getattr(self.browser, '_agent_tab', '') or ''
+		done = await self._alert_and_wait(reason, kind, url, tab)
+		if done:
+			return 'The user says it is done. Check the page now and continue the application.'
+		q = self.questions.ask(
+			Question(
+				question=reason,
+				field_hint='help',
+				company=self.current.get('company', ''),
+				title=self.current.get('title', ''),
+				url=url,
+			)
+		)
+		asked.append(q.question)
+		self._emit('question', id=q.id, question=q.question)
+		self._log('No answer in time: the job is parked in Questions; the loop goes on.', 'error')
+		return (
+			'The user is away: this job is parked for them. Finish now with status "needs_input" and notes saying what '
+			'is blocking. Do nothing else on this page.'
+		)
 
 	async def _apply(self, job: dict, llm: Any, writer: Any) -> None:
 		url = job['url']
@@ -440,10 +737,22 @@ class Runner:
 		outcome: JobOutcome | None = None
 		error = ''
 		try:
-			result = await self._run_agent(APPLY_TASK.replace('{url}', url), JobOutcome, tools, APPLY_MAX_STEPS, APPLY_TIMEOUT_S)
-			outcome = result.structured_output
+			for attempt in (1, 2):
+				result = await self._run_agent(
+					APPLY_TASK.replace('{url}', url), JobOutcome, tools, APPLY_MAX_STEPS, APPLY_TIMEOUT_S
+				)
+				outcome = result.structured_output
+				if outcome is not None or attempt == 2 or not CRASHED.search(result.error or ''):
+					break
+				self._log('The browser closed or crashed; starting it again and retrying this job.', 'error')
+				await self._start_browser()
+				mark = self.guard.mark() if self.guard else 0
+				tab = await asyncio.to_thread(self._open_tab, url)
 			if outcome is None:
 				error = result.error or f'the agent stopped ({result.status}) before it finished'
+		except Interrupted as e:
+			self._park(job, tab, mark, docs, asked, e.reason, update=False)
+			return
 		except asyncio.CancelledError:
 			error = 'stopped by you'
 			self._finish(job, tab, mark, None, docs, asked, error)
@@ -453,6 +762,27 @@ class Runner:
 			error = str(e)
 		self._finish(job, tab, mark, outcome, docs, asked, error)
 		self._log(f'Done in {time.monotonic() - started:.0f}s.')
+
+	def _park(self, job: dict, tab: str, mark: int, docs: dict, asked: list[str], reason: str, update: bool) -> None:
+		"""An interrupted job waits: after a take-over it is finished first on resume(); when stuck, it waits for the
+		user in Questions (Done sends the agent back)."""
+		if reason == 'hold':
+			notes = 'Paused while you took over; JobApply finishes it when you click Continue.'
+			self.request_refill(job['url'], first=True)
+		else:
+			notes = 'The agent got stuck repeating the same step on this page.'
+			q = self.questions.ask(
+				Question(
+					question=f'JobApply got stuck on {job.get("company") or "this application"}. Finish it in its tab and '
+					'click Submitted, or click Done to let JobApply try again.',
+					field_hint='help',
+					company=job.get('company', ''),
+					url=job['url'],
+				)
+			)
+			asked.append(q.question)
+			self._emit('question', id=q.id, question=q.question)
+		self._finish(job, tab, mark, None, docs, asked, notes, update=update, status='needs_input')
 
 	async def _refill(self, url: str, llm: Any, writer: Any) -> None:
 		"""Go back to a job that waited on questions: fill what the answers (now in the profile) cover, in its tab."""
@@ -490,6 +820,9 @@ class Runner:
 			outcome = result.structured_output
 			if outcome is None:
 				error = result.error or f'the agent stopped ({result.status}) before it finished'
+		except Interrupted as e:
+			self._park(job, tab, mark, docs, asked, e.reason, update=True)
+			return
 		except asyncio.CancelledError:
 			self._finish(job, tab, mark, None, docs, asked, 'stopped by you', update=True)
 			raise
@@ -508,6 +841,7 @@ class Runner:
 		asked: list[str],
 		error: str,
 		update: bool = False,
+		status: str | None = None,
 	) -> None:
 		"""Audit the filled tabs, hand them to the user, and log the job (update: change its existing row)."""
 		tabs = self.guard.tabs_since(mark) if self.guard else [tab]
@@ -517,7 +851,7 @@ class Runner:
 			tabs = [*kept, *(t for t in tabs if t not in kept)]
 			if tab not in tabs:
 				tabs.insert(0, tab)
-		status = outcome.status if outcome else 'failed'
+		status = status or (outcome.status if outcome else 'failed')
 		if status in ('filled', 'email_drafted', 'needs_input', 'failed') and self.browser is not None:
 			try:  # answers the profile does not give (salary, start date, visa...) are emptied and asked
 				profile = read_text(self.settings.profile_path, 'profile')
@@ -547,6 +881,13 @@ class Runner:
 			status = 'needs_input'
 		if update and status == 'failed':  # a job that was filled before stays the user's to finish
 			status = 'needs_input'
+		check: dict = {}
+		if status != 'skipped' and tabs and self.browser is not None:
+			try:  # what the user will find in the form: empty required fields, errors, and a screenshot of it
+				shot = sub('screenshots') / f'{datetime.now():%Y-%m-%d_%H%M%S}_{documents.slug(job.get("company") or "job")}.png'
+				check = audit.final_check(self._ws(), tabs[-1], shot)
+			except Exception as e:
+				logger.warning('final check failed: %s', e)
 		if status == 'skipped':
 			self._close_tabs(tabs)
 			tabs = []
@@ -565,6 +906,8 @@ class Runner:
 			'cover_letter': docs.get('cover_letter_pdf', ''),
 			'unanswered_questions': ' | '.join(unique.values()),
 			'notes': (outcome.notes if outcome else '') or error,
+			'check': check.get('summary', ''),
+			'screenshot': check.get('screenshot', ''),
 		}
 		if update:
 			row = self.tracker.update(job['url'], **values)

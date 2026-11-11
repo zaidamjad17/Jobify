@@ -48,6 +48,29 @@ need Chrome or Edge installed (Edge comes with Windows).
 - **Pause / Stop**: Pause finishes the current job, then waits. Stop cancels the current job. The open tabs stay
   either way.
 
+## When it needs you
+
+- **Captcha, "verify you are human", login or a code:** a yellow banner appears with a sound, and the JobApply window
+  and the job's tab come to the front. Do it in the browser and click **I did it, continue**; the agent carries on in
+  the same job. Away for more than a minute? The job is parked in **Questions** (click **Done** when you have done it)
+  and the loop moves on to the next job.
+- **Take over:** stops the agent after its current step so you can use the browser. **Continue** finishes that job
+  first, then the loop goes on.
+- **Before searching** it checks that you are logged in and not blocked on each board and Gmail, and asks you to fix
+  it; a board still blocked is skipped for that run.
+- **Too many tabs waiting** (Setup: pause for review at N): the loop holds until you review some and click Continue.
+
+## Reliability
+
+- **Final check:** after each job, History shows "✓ All required fields filled" or "⚠ 2 required fields empty: …"
+  plus any error messages on the form, with a screenshot of it.
+- **Stuck detector:** the same step 5 times in a row parks the job instead of wasting steps.
+- **Backup model** (Setup): used for a job when the main model stays busy.
+- **Browser crash:** the browser is started again and the job retried once.
+- **Fresh jobs first:** postings older than N days (Setup) are skipped; the newest go first.
+- **History** shows today's summary and why unfinished jobs are waiting. **Setup** shows how complete your profile is
+  and what forms will still have to ask.
+
 ## The submit guard
 
 A guard runs on its own connection to the browser and covers every tab and iframe before the page's own scripts run.

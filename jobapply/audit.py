@@ -6,6 +6,7 @@ states nothing on that topic, the field is emptied in the page and its label com
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 
@@ -187,3 +188,59 @@ def correct_contacts(ws_url: str, tabs: list[str], profile: str) -> list[dict]:
 			except Exception:
 				continue
 	return fixed
+
+
+FINAL_CHECK_JS = r"""
+(() => {
+	const visible = el => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el);
+		return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+	const labelOf = el => {
+		const parts = [];
+		if (el.id) document.querySelectorAll('label[for="' + CSS.escape(el.id) + '"]').forEach(l => parts.push(l.innerText));
+		const wrap = el.closest('label'); if (wrap) parts.push(wrap.innerText);
+		parts.push(el.getAttribute('aria-label') || '', el.getAttribute('placeholder') || '');
+		return parts.join(' ').replace(/\s+/g, ' ').trim();
+	};
+	const empty = [];
+	for (const el of document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=checkbox]):not([type=radio]), textarea, select')) {
+		if (!visible(el) && el.type !== 'file') continue;
+		const label = labelOf(el);
+		const required = el.required || el.getAttribute('aria-required') === 'true' || /\*\s*$/.test(label);
+		const filled = el.type === 'file' ? el.files && el.files.length : String(el.value || '').trim() !== '';
+		if (required && !filled) empty.push((label || el.name || el.type).replace(/\s*\*\s*$/, '').slice(0, 60));
+	}
+	const errors = [];
+	for (const el of document.querySelectorAll('[role=alert], [aria-live=assertive], .error, .errors, .field-error, .invalid-feedback, [class*="error-message"]')) {
+		const text = (el.innerText || '').replace(/\s+/g, ' ').trim();
+		if (text && text.length < 200 && visible(el) && !errors.includes(text)) errors.push(text);
+	}
+	return JSON.stringify({ empty: [...new Set(empty)].slice(0, 15), errors: errors.slice(0, 8) });
+})()
+"""
+
+
+def final_check(ws_url: str, tab: str, screenshot_path) -> dict:
+	"""The form as JobApply left it: required fields still empty, visible error messages, and a screenshot.
+	-> {'empty': [...], 'errors': [...], 'summary': str, 'screenshot': str}"""
+	import base64
+
+	result: dict = {'empty': [], 'errors': [], 'summary': '', 'screenshot': ''}
+	with CDP(ws_url) as cdp:
+		session = cdp.send('Target.attachToTarget', targetId=tab, flatten=True)['sessionId']
+		try:
+			value = cdp.send('Runtime.evaluate', session, expression=FINAL_CHECK_JS, returnByValue=True)['result'].get('value')
+			result.update(json.loads(value or '{}'))
+			shot = cdp.send('Page.captureScreenshot', session, format='png', captureBeyondViewport=True)['data']
+			screenshot_path.write_bytes(base64.b64decode(shot))
+			result['screenshot'] = str(screenshot_path)
+		finally:
+			with contextlib.suppress(Exception):
+				cdp.send('Target.detachFromTarget', sessionId=session)
+	parts = []
+	if result['empty']:
+		n = len(result['empty'])
+		parts.append(f'{n} required field{"s" if n > 1 else ""} empty: {", ".join(result["empty"])}')
+	if result['errors']:
+		parts.append('errors on the form: ' + '; '.join(result['errors']))
+	result['summary'] = '. '.join(parts) if parts else 'All required fields filled, no errors shown.'
+	return result

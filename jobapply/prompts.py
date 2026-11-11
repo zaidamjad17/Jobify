@@ -28,9 +28,15 @@ It returns the paths of a resume PDF and a cover letter PDF made for this job, a
 PDF to every resume / CV field (upload_file(selector, path) on the input[type=file]) and the cover letter PDF to a cover
 letter upload; paste the letter text into a cover letter text box. Verify each upload shows the file name.
 
-Accounts: the browser keeps the user's logins. If a site asks you to sign in or create an account and you cannot
-continue without it, do not type passwords: call ask_user('Please log in to <site> in the JobApply browser', 'login') and
-finish with status needs_input. Never solve a site's account verification by email codes yourself.
+Accounts and human checks: the browser keeps the user's logins. If a site asks you to sign in or create an account,
+shows a captcha or "verify you are human", or asks for an email/SMS code, do not type passwords or try to beat the
+check: call need_human(reason, kind) with a short reason naming the site ("Captcha on Teradata careers", "Log in to
+Workday for Acme"). The user is alerted and usually does it within a minute; then check the page and continue. If the
+tool says the job is parked, finish with status needs_input. Never solve account verification by email codes yourself.
+
+After every Next / Continue / Review click, read the page for validation errors (red messages, role=alert,
+aria-invalid fields, "this field is required") and fix them before going on; a step that did not advance usually
+has one. On the last page, check that every required field is filled before you finish.
 
 Stay in the tabs of this job: do not switch to, close or change other tabs (the user is reviewing them).
 
@@ -56,8 +62,8 @@ submit.
      https://mail.google.com/mail/?view=cm&fs=1&to=<address>&su=<email_subject> , wait for the compose window, write a
      short email body (the cover letter text works), attach the resume PDF and cover letter PDF with
      upload_file('input[type=file]', path) and verify both attachments show, and leave the draft open without sending.
-     Status "email_drafted". If Gmail asks you to sign in: ask_user('Please log in to Gmail in the JobApply browser',
-     'login') and status "needs_input".
+     Status "email_drafted". If Gmail asks you to sign in: need_human('Log in to Gmail in the JobApply browser',
+     'login').
 4. Scroll through the final page and check that the required fields are filled. Status "needs_input" when any
    required field is still empty because of a question you sent to ask_user, or a login is needed.
 5. If the posting is closed or the page cannot be used, status "failed" with the reason.
@@ -73,7 +79,7 @@ The user chose not to answer: {skipped}. Leave those fields empty and do not ask
    (those questions first, then any other empty required field), and keep what is already filled unless it is wrong.
    If a resume or cover letter upload is empty, call prepare_documents (it returns the files already made for this
    job). If the page lost the form (expired, logged out, back on the posting), open the application again and fill it
-   from the start. If it asks to log in and the user said they logged in, continue; otherwise ask_user again.
+   from the start. If it asks to log in or shows a captcha, call need_human.
 2. Stop before the final submit, exactly as before.
 3. Status "filled" when every required field is filled; "needs_input" (with ask_user for each) when something is
    still missing. Notes: what you filled now."""
@@ -81,7 +87,9 @@ The user chose not to answer: {skipped}. Leave those fields empty and do not ask
 SEARCH_TASK = """Find up to {count} job postings on {board} that match the job criteria and are not yet in the user's list.
 
 Start at {start_url} (already open in the current tab) and search with the criteria's titles and locations, newest
-first when the site offers it. {board_hint}
+first when the site offers it (a "past week" / "past 2 weeks" date filter when there is one): fresh postings get far
+more replies. Skip postings older than {age} days and report each job's posted_days_ago when the site shows it.
+{board_hint}
 This is search round {round}: earlier rounds already went through the results before page {round}, so go to results
 page {round} (use the site's page links or its start/offset parameter) and collect from there; continue to the next
 pages while you have fewer than {count}.
@@ -117,6 +125,7 @@ class FoundJob(BaseModel):
 	company: str = ''
 	title: str = ''
 	board: str = ''
+	posted_days_ago: int | None = Field(None, description='days since the posting went up, when the site shows it')
 
 
 class FoundJobs(BaseModel):

@@ -426,3 +426,58 @@ def test_answering_a_jobs_last_question_sends_it_back_to_be_filled(home, monkeyp
 	assert api.mark_submitted('https://jobs.lever.co/b/2')['ok']
 	assert [q.question for q in qs.open()] == [] and why.id not in [q.id for q in qs.open()]
 	assert [r.status for r in t.rows()] == ['needs_input', 'submitted']
+
+
+def test_an_older_applications_csv_gains_the_new_columns_without_losing_rows(tmp_path):
+	"""0.3.0 adds check and screenshot columns: a file written by 0.2.x is rewritten with the new header on the next
+	add, its rows kept (appending with a different header would shift every column)."""
+	import csv
+
+	path = tmp_path / 'a.csv'
+	old = [
+		'date',
+		'time',
+		'company',
+		'title',
+		'url',
+		'board',
+		'status',
+		'tab_id',
+		'resume',
+		'cover_letter',
+		'unanswered_questions',
+		'notes',
+	]
+	with path.open('w', newline='', encoding='utf-8-sig') as f:
+		writer = csv.DictWriter(f, fieldnames=old)
+		writer.writeheader()
+		writer.writerow({**dict.fromkeys(old, ''), 'url': 'https://x.example/1', 'status': 'filled', 'notes': 'old row'})
+	t = Tracker(path)
+	t.add(Row(url='https://x.example/2', status='needs_input', check='1 required field empty: Phone'))
+	rows = t.rows()
+	assert [(r.url, r.status, r.notes, r.check) for r in rows] == [
+		('https://x.example/1', 'filled', 'old row', ''),
+		('https://x.example/2', 'needs_input', '', '1 required field empty: Phone'),
+	]
+	with path.open(newline='', encoding='utf-8-sig') as f:
+		assert next(csv.reader(f))[-2:] == ['check', 'screenshot']
+
+
+def test_profile_completeness_lists_what_will_cause_questions(tmp_path):
+	from jobapply.profile import STARTER_PROFILE, completeness
+
+	score, missing = completeness(STARTER_PROFILE)
+	assert score < 30 and 'Salary range' in missing and 'A project you are proud of' in missing
+	full = STARTER_PROFILE.replace('- Full name:', '- Full name: Ada Lovelace').replace('- Email:', '- Email: a@b.c')
+	full = full.replace(
+		'- Desired salary / salary range (say the currency):', '- Desired salary / salary range (say the currency): 70k EUR'
+	)
+	score2, missing2 = completeness(full)
+	assert score2 > score and 'Salary range' not in missing2 and 'Full name' not in missing2
+
+
+def test_freshest_jobs_come_first_and_old_ones_are_dropped():
+	from jobapply.runner import freshest_first
+
+	jobs = [{'url': 'a', 'days': 10}, {'url': 'b', 'days': 1}, {'url': 'c', 'days': None}, {'url': 'd', 'days': 40}]
+	assert [j['url'] for j in freshest_first(jobs, max_age_days=14)] == ['b', 'a', 'c']
