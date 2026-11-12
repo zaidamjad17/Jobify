@@ -58,8 +58,24 @@ not added again. **Clear finished** removes the done ones; × removes one.
 - **Email applications**: when a posting asks you to email your CV, it opens a Gmail compose tab, writes the email,
   attaches the resume and cover letter PDFs, and leaves the draft unsent.
 - **Daily cap**: filled, email-drafted and needs-input jobs count toward it. Skipped and failed jobs do not.
+- **Keep searching** (Setup → Jobs, on by default): when the boards have nothing new, Jobify rests and searches them
+  again every N minutes (default 30) until the daily cap. A job link you add, or an answered question, ends the rest at
+  once.
 - **Pause / Stop**: Pause finishes the current job, then waits. Stop cancels the current job. The open tabs stay
   either way.
+
+## History: every job from A to Z
+
+Click a job in **History** to open it:
+
+- **Summary**: what the job is (role, main duties, requirements, location, pay, type), why you fit it, the status, the
+  final check, the questions it waited on, and a timeline of what Jobify did. The full posting is kept too.
+- **Resume** and **Cover letter**: the PDFs made for this job, shown in the app. Zoom with the buttons, Ctrl + mouse
+  wheel or `+` / `-` / `0`, and drag to move around. **Open PDF** opens the file itself.
+- **What we submitted**: every field Jobify left filled on the form (question → answer), the files it attached, and a
+  screenshot of the form as it handed it to you.
+
+Jobs from before 0.5.0 show their files and notes; the summary and the filled fields are recorded from 0.5.0 on.
 
 ## When it needs you
 
@@ -80,6 +96,11 @@ not added again. **Clear finished** removes the done ones; × removes one.
 - **Stuck detector:** the same step 5 times in a row parks the job instead of wasting steps.
 - **Backup model** (Setup): used for a job when the main model stays busy.
 - **Browser crash:** the browser is started again and the job retried once.
+- **Errors never end the run:** a job or search that fails on an error is logged and the loop goes on. When jobs or
+  searches fail on errors 3 times in a row (no internet, the AI provider down), the loop holds with a banner instead of
+  burning the day's jobs; **Continue** goes on (with the AI settings as saved now). An AI key the provider refuses
+  holds at once. A board whose search keeps failing is left out of that run, and **Run** says why the loop last
+  stopped.
 - **Fresh jobs first:** postings older than N days (Setup) are skipped; the newest go first.
 - **History** shows today's summary and why unfinished jobs are waiting. **Setup** shows how complete your profile is
   and what forms will still have to ask.
@@ -105,7 +126,8 @@ Jobify was called JobApply before: if `%APPDATA%\JobApply` exists, Jobify keeps 
 
 | File | What |
 |---|---|
-| `applications.csv` | One row per job: `date, time, company, title, url, board, status, tab_id, resume, cover_letter, unanswered_questions, notes`. Status is `filled`, `email_drafted`, `needs_input`, `skipped` or `failed`. Opens in Excel. |
+| `jobs\` | One record per job for History: the posting, its summary, the filled fields and the timeline. |
+| `applications.csv` | One row per job: `date, time, company, title, url, board, status, tab_id, resume, cover_letter, unanswered_questions, notes`. Status is `filled`, `email_drafted`, `needs_input`, `submitted`, `skipped` or `failed`. **Open CSV** opens a copy in Excel (Excel locks the file it has open, and Jobify must keep writing it). |
 | `questions.json` | Questions you have answered and ones still open. |
 | `documents\` | Per job: the resume and cover letter as PDF and HTML, the letter as text, and the model's JSON. |
 | `browser-profile\` | The Jobify browser's logins. |

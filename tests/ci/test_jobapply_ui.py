@@ -95,13 +95,52 @@ STATE = {
 	],
 }
 
+PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+
+DETAIL = {
+	'row': {
+		**STATE['rows'][0],
+		'resume': 'C:/docs/k/Ada_Resume.pdf',
+		'cover_letter': 'C:/docs/k/Ada_Cover_Letter.pdf',
+		'screenshot': 'C:/s/k.png',
+	},
+	'record': {
+		'summary': {
+			'about': 'Kodifly builds lidar perception software and needs a graduate engineer.',
+			'responsibilities': ['Write perception pipelines'],
+			'requirements': ['Python', 'A degree in CS'],
+			'location': 'Hong Kong',
+			'salary': '',
+			'employment_type': 'Full-time',
+			'why_match': ['Python projects'],
+		},
+		'job_description': 'Full text of the posting.',
+		'submitted': {
+			'fields': [
+				{'label': 'First name', 'value': 'Ada', 'kind': 'text'},
+				{'label': 'Email', 'value': 'ada@example.com', 'kind': 'email'},
+			],
+			'files': ['C:/docs/k/Ada_Resume.pdf'],
+			'page_url': 'https://jobs.ashbyhq.com/k/1/application',
+			'page_title': 'Apply to Kodifly',
+		},
+		'timeline': [{'time': '10:00:01', 'text': 'Opened the posting', 'level': 'info'}],
+		'documents': {'folder': 'C:/docs/k', 'cover_letter_text': 'Dear Kodifly,', 'email_subject': ''},
+	},
+}
+
 STUB = """
 window.__calls = [];
 window.__state = %s;
+window.__detail = %s;
+window.__png = %s;
 window.pywebview = { api: new Proxy({}, { get: (_, name) => async (...args) => {
 	window.__calls.push([name, ...args]);
 	if (name === 'state') return JSON.parse(JSON.stringify(window.__state));
 	if (name === 'events') { const e = window.__pending || []; window.__pending = []; return e; }
+	if (name === 'test_model') return { ok: true, model: 'gemini-x', reply: 'ok' };
+	if (name === 'job_detail') return JSON.parse(JSON.stringify(window.__detail));
+	if (name === 'document_pages') return { pages: [window.__png, window.__png], width: 600, height: 848 };
 	if (name === 'dismiss') { window.__state.questions = window.__state.questions.filter(q => q.id !== args[0]); return { ok: true }; }
 	return { ok: true };
 } }) };
@@ -109,12 +148,16 @@ window.addEventListener('load', () => window.dispatchEvent(new Event('pywebviewr
 """
 
 
-def _page(chrome):
+def _page(chrome, state=None, wait='a_q1'):
 	cdp = CDP(chrome['ws'])
 	target = cdp.send('Target.createTarget', url='about:blank')['targetId']
 	session = cdp.send('Target.attachToTarget', targetId=target, flatten=True)['sessionId']
 	cdp.send('Page.enable', session)
-	cdp.send('Page.addScriptToEvaluateOnNewDocument', session, source=STUB % json.dumps(STATE))
+	cdp.send(
+		'Page.addScriptToEvaluateOnNewDocument',
+		session,
+		source=STUB % (json.dumps(state or STATE), json.dumps(DETAIL), json.dumps(PNG)),
+	)
 	cdp.send('Page.navigate', session, url=resource('ui/index.html').resolve().as_uri())
 
 	def ev(expression):
@@ -123,7 +166,7 @@ def _page(chrome):
 
 	for _ in range(100):
 		try:
-			if ev('!!document.getElementById("a_q1")'):
+			if ev(f'!!document.getElementById("{wait}")'):
 				break
 		except Exception:
 			pass
@@ -238,6 +281,134 @@ def test_job_links_are_pasted_on_the_run_tab_and_show_their_status(chrome):
 		assert ['add_job_links', 'https://boards.greenhouse.io/x/jobs/9', True] in calls
 		assert ['remove_job_link', 'https://jobs.lever.co/acme/1'] in calls
 		assert ev('document.getElementById("linkinput").value') == ''
+	finally:
+		cdp.send('Target.closeTarget', targetId=target)
+		cdp.close()
+
+
+def _wait(ev, expression, timeout=4.0):
+	deadline = time.monotonic() + timeout
+	while time.monotonic() < deadline:
+		if ev(expression):
+			return True
+		time.sleep(0.05)
+	return False
+
+
+def test_history_opens_a_job_with_its_summary_resume_and_what_was_submitted(chrome):
+	"""User request: in History, see each job's CV inside the app (zoomable) and an A-to-Z summary: what the job was
+	about and what was submitted."""
+	cdp, session, target, ev = _page(chrome)
+	try:
+		ev('document.querySelector("nav button[data-tab=history]").click()')
+		assert ev('document.querySelectorAll("#rows [data-job]").length') == 2
+		ev('document.querySelector("#rows [data-job] .ti").click()')  # the row itself, not one of its buttons
+		assert _wait(ev, '!document.getElementById("detail").hidden')
+		assert _wait(ev, 'document.getElementById("dp_summary").innerText.includes("lidar perception")')
+		summary = ev('document.getElementById("dp_summary").textContent')
+		assert 'A degree in CS' in summary and 'What we submitted' in summary and 'ada@example.com' in summary
+		assert 'Opened the posting' in summary  # the timeline
+		assert ['job_detail', 'https://jobs.ashbyhq.com/k/1'] in ev('window.__calls')
+
+		ev('document.querySelector("#dtabs [data-dtab=resume]").click()')
+		assert _wait(ev, 'document.querySelectorAll("#v_resume .vpages img").length === 2')
+		assert ['document_pages', 'C:/docs/k/Ada_Resume.pdf', 2] in ev('window.__calls')
+		before = ev('document.querySelector("#v_resume .vpages img").getBoundingClientRect().width')
+		label = ev('document.querySelector("#v_resume .zlabel").textContent')
+		ev('document.querySelector("#v_resume [data-z=in]").click()')
+		after = ev('document.querySelector("#v_resume .vpages img").getBoundingClientRect().width')
+		assert after > before * 1.1
+		assert int(ev('document.querySelector("#v_resume .zlabel").textContent').rstrip('%')) > int(label.rstrip('%'))
+		ev('document.querySelector("#v_resume [data-z=reset]").click()')
+		assert ev('document.querySelector("#v_resume .zlabel").textContent') == '100%'
+		ev('document.querySelector("#v_resume [data-v=open]").click()')
+		time.sleep(0.2)
+		assert ['open_path', 'C:/docs/k/Ada_Resume.pdf'] in ev('window.__calls')
+
+		ev('document.querySelector("#dtabs [data-dtab=submitted]").click()')
+		assert _wait(ev, 'document.querySelectorAll("#v_shot .vpages img").length > 0')
+		assert 'Apply to Kodifly' in ev('document.getElementById("d_submitted").innerText')
+		assert ['document_pages', 'C:/s/k.png', 2] in ev('window.__calls')
+
+		ev('document.querySelector("#dtabs [data-dtab=letter]").click()')
+		assert 'Dear Kodifly' in ev('document.getElementById("d_lettertext").innerText')
+
+		ev('document.dispatchEvent(new KeyboardEvent("keydown", {key: "Escape"}))')
+		assert ev('document.getElementById("detail").hidden') is True
+		assert ev('document.querySelectorAll("[data-submitted]").length') == 1  # the panel's buttons are gone
+	finally:
+		cdp.send('Target.closeTarget', targetId=target)
+		cdp.close()
+
+
+def test_history_filters_rows_by_status_and_search(chrome):
+	cdp, session, target, ev = _page(chrome)
+	try:
+		ev('document.querySelector("nav button[data-tab=history]").click()')
+		ev('document.querySelector("#hfilters [data-filter=skipped]").click()')
+		assert _wait(ev, 'document.querySelectorAll("#rows [data-job]").length === 1')
+		assert 'Duna' in ev('document.getElementById("rows").innerText')
+		ev('document.querySelector("#hfilters [data-filter=all]").click()')
+		ev('(i => { i.value = "kodi"; i.dispatchEvent(new Event("input")); })(document.getElementById("hsearch"))')
+		assert _wait(ev, 'document.querySelectorAll("#rows [data-job]").length === 1')
+		assert 'Kodifly' in ev('document.getElementById("rows").innerText')
+	finally:
+		cdp.send('Target.closeTarget', targetId=target)
+		cdp.close()
+
+
+def test_run_shows_the_setup_checklist_and_why_the_loop_last_stopped(chrome):
+	"""A new user sees what is left to set up; after a run ends, the Run page says why it stopped."""
+	state = {
+		**STATE,
+		'runner': 'idle',
+		'setup': {'profile': True, 'criteria': False, 'model': False, 'model_error': 'Add your Gemini API key in Setup.'},
+		'last_stop': {'text': 'Daily limit reached (20 jobs).', 'kind': 'cap', 'time': '18:02:11'},
+	}
+	cdp, session, target, ev = _page(chrome, state)
+	try:
+		assert ev('document.getElementById("onboard").hidden') is False
+		text = ev('document.getElementById("onboard").innerText')
+		assert '1 of 3 done' in text and 'Add your Gemini API key in Setup.' in text
+		ev('document.querySelector("#onboard [data-setup]").click()')
+		assert ev('document.getElementById("setup").classList.contains("on")') is True
+		assert ev('document.getElementById("laststop").hidden') is False
+		assert 'Daily limit reached (20 jobs).' in ev('document.getElementById("laststop").innerText')
+		ev('document.getElementById("laststop_close").click()')
+		assert ev('document.getElementById("laststop").hidden') is True
+	finally:
+		cdp.send('Target.closeTarget', targetId=target)
+		cdp.close()
+
+
+def test_a_resting_loop_a_hold_after_errors_and_testing_the_model(chrome):
+	"""The loop rests between board searches instead of ending; a hold after repeated errors shows Continue without a
+	countdown; Setup tests the AI model and saves the keep-searching settings."""
+	state = {
+		**STATE,
+		'current': {'phase': 'rest', 'until': '14:30'},
+		'settings': {**STATE['settings'], 'keep_searching': True, 'search_again_minutes': 45},
+	}
+	cdp, session, target, ev = _page(chrome, state)
+	try:
+		assert 'searching the boards again at 14:30' in ev('document.getElementById("current").textContent')
+		ev(
+			"""window.__state.help = {reason: 'Five jobs failed in a row', need: 'errors', company: ''};
+			window.__pending = [{seq: 200, kind: 'help', time: 't', reason: 'Five jobs failed in a row', need: 'errors', sound: true, wait_s: 0}]"""
+		)
+		assert _wait(ev, '!document.getElementById("helpbar").hidden')
+		assert ev('document.getElementById("helpdone").textContent') == 'Continue'
+		assert 'parks this job' not in ev('document.getElementById("helphint").textContent')
+
+		ev('document.querySelector("nav button[data-tab=setup]").click()')
+		assert ev('document.getElementById("search_again_minutes").value') == '45'
+		assert ev('document.getElementById("keep_searching").checked') is True
+		ev('document.getElementById("testmodel").click()')
+		assert _wait(ev, 'document.getElementById("modelstatus").textContent.includes("Works (gemini-x)")')
+		calls = ev('window.__calls')
+		saved = next(c for c in calls if c[0] == 'save_settings')
+		assert saved[1]['keep_searching'] is True and saved[1]['search_again_minutes'] == 45
+		assert calls.index(saved) < calls.index(['test_model', ''])
 	finally:
 		cdp.send('Target.closeTarget', targetId=target)
 		cdp.close()

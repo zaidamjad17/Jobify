@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import csv
 import threading
+import time
 from dataclasses import asdict, dataclass, fields
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+from jobapply.paths import replace_retrying
 
 # A job counts toward the daily cap once the loop worked on it; a job skipped for not matching the criteria does not.
 COUNTED = frozenset({'filled', 'email_drafted', 'needs_input', 'submitted'})
@@ -47,6 +50,26 @@ class Row:
 
 
 COLUMNS = [f.name for f in fields(Row)]
+LOCK_WAIT_S = 5.0  # how long a write waits for another program (Excel) to let go of the file
+
+
+class TrackerLocked(PermissionError):
+	"""applications.csv stayed locked by another program."""
+
+
+def _retry_locked(action, path: Path):
+	"""Run action(), retried while Windows reports the file in use; then a clear error naming the likely cause."""
+	deadline = time.monotonic() + LOCK_WAIT_S
+	while True:
+		try:
+			return action()
+		except PermissionError:
+			if time.monotonic() >= deadline:
+				raise TrackerLocked(
+					f'{path.name} is open in another program (Excel?). Close it there; Jobify keeps a copy for viewing '
+					'(History > Open CSV).'
+				) from None
+			time.sleep(0.25)
 
 
 class Tracker:
@@ -55,9 +78,12 @@ class Tracker:
 		self._lock = threading.Lock()
 
 	def rows(self) -> list[Row]:
-		try:
+		def read() -> list[Row]:
 			with self.path.open(newline='', encoding='utf-8-sig') as f:
 				return [Row(**{k: _from_cell(r.get(k) or '') for k in COLUMNS}) for r in csv.DictReader(f)]
+
+		try:
+			return _retry_locked(read, self.path)
 		except FileNotFoundError:
 			return []
 
@@ -69,12 +95,16 @@ class Tracker:
 		with self._lock:
 			self._upgrade_header()
 			new = not self.path.exists() or self.path.stat().st_size == 0
-			# utf-8-sig on a new file: Excel on Windows reads it as UTF-8 (accented names stay readable)
-			with self.path.open('a', newline='', encoding='utf-8-sig' if new else 'utf-8') as f:
-				writer = csv.DictWriter(f, fieldnames=COLUMNS)
-				if new:
-					writer.writeheader()
-				writer.writerow({k: _to_cell(v) for k, v in asdict(row).items()})
+
+			def append() -> None:
+				# utf-8-sig on a new file: Excel on Windows reads it as UTF-8 (accented names stay readable)
+				with self.path.open('a', newline='', encoding='utf-8-sig' if new else 'utf-8') as f:
+					writer = csv.DictWriter(f, fieldnames=COLUMNS)
+					if new:
+						writer.writeheader()
+					writer.writerow({k: _to_cell(v) for k, v in asdict(row).items()})
+
+			_retry_locked(append, self.path)
 		return row
 
 	def _upgrade_header(self) -> None:
@@ -93,7 +123,7 @@ class Tracker:
 			writer = csv.DictWriter(f, fieldnames=COLUMNS)
 			writer.writeheader()
 			writer.writerows({k: _to_cell(v) for k, v in asdict(r).items()} for r in rows)
-		tmp.replace(self.path)
+		_retry_locked(lambda: replace_retrying(tmp, self.path), self.path)
 
 	def latest(self, url: str) -> Row | None:
 		"""The newest row for this job (any link to it)."""
@@ -119,7 +149,7 @@ class Tracker:
 				writer = csv.DictWriter(f, fieldnames=COLUMNS)
 				writer.writeheader()
 				writer.writerows({k: _to_cell(v) for k, v in asdict(r).items()} for r in rows)
-			tmp.replace(self.path)
+			_retry_locked(lambda: replace_retrying(tmp, self.path), self.path)
 			return rows[index]
 
 	def count_today(self, today: str | None = None) -> int:

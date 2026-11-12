@@ -19,7 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from jobapply import audit, documents
+from jobapply import audit, documents, records
 from jobapply.cdp import print_pdf
 from jobapply.guard import SubmitGuard
 from jobapply.llm import agent_llm, writer_model
@@ -28,7 +28,7 @@ from jobapply.profile import Question, Questions, read_text, tone_from_criteria
 from jobapply.profile import _norm as norm_question
 from jobapply.prompts import APPLY_TASK, BOARD_HINTS, REFILL_TASK, RULES, SEARCH_TASK, FoundJobs, JobOutcome
 from jobapply.settings import BOARDS, Settings
-from jobapply.tracker import Row, Tracker, job_key
+from jobapply.tracker import Row, Tracker, TrackerLocked, job_key
 
 logger = logging.getLogger('jobapply')
 APPLY_MAX_STEPS, APPLY_TIMEOUT_S = 90, 1500
@@ -82,6 +82,20 @@ COUNTED_OUTCOMES = ('filled', 'email_drafted', 'needs_input')
 HELP_WAIT_S = 60  # how long the agent waits for the user on a captcha / login before it parks the job
 STUCK_REPEATS = 5  # the same step this many times in a row: the agent is stuck, the job is parked
 HELP_KINDS = ('login', 'help')  # questions closed with Done (no answer): the user did something in the browser
+MAX_ERRORS_IN_ROW = 3  # jobs or searches failing in a row on errors (not on the page): the loop holds and asks the user
+MAX_SEARCH_FAILURES = 3  # a board whose search fails this many times in a row is left out of this run
+MAX_CRASHES_IN_ROW = 5  # loop steps in a row that raised: something is broken for good, the run ends with the reason
+MAX_REST_CYCLES = 8  # searches again after a rest at most this many times in a row without a new job
+# The model refused the key or the account: every job would fail the same way, so the loop holds at once
+MODEL_REJECTED = re.compile(
+	r'\b401\b|API key not valid|invalid[_ ]api[_ ]key|Incorrect API key|PERMISSION_DENIED|Unauthorized|'
+	r'API_KEY_INVALID|billing|insufficient_quota|account is not active|deactivated',
+	re.I,
+)
+
+
+class SearchFailed(Exception):
+	"""A board search ended on an error (the model, the browser), not on the page: it is not 'nothing new'."""
 
 
 class Interrupted(Exception):
@@ -207,6 +221,12 @@ class Runner:
 		self._interrupt: str | None = None  # why it was cancelled: 'hold' or 'stuck'
 		self._help_done = threading.Event()  # the user clicked "I did it, continue" on a handoff
 		self.help: dict[str, str] | None = None  # the handoff waiting for the user, for the UI
+		self._errors_in_row = 0  # jobs / searches that ended on an error in a row (reset by one that worked)
+		self._last_error = ''
+		self._job_log: list[dict] = []  # the current job's activity, saved in its record
+		self._wake = threading.Event()  # links or answers arrived while the loop rests between searches
+		self._stop_reason: tuple[str, str] | None = None  # (kind, text): why the loop ended, for the UI
+		self.last_stop: dict[str, str] | None = None  # the last run's end: {kind, text, time}
 
 	# control (any thread)
 
@@ -220,6 +240,9 @@ class Runner:
 		self._refill_only = refill_only
 		self._links_only = links_only
 		self._stop = False
+		self._stop_reason = None
+		self.last_stop = None
+		self._errors_in_row = 0
 		self._resume.set()
 		self._thread = threading.Thread(target=self._main, daemon=True, name='jobapply-runner')
 		self._thread.start()
@@ -229,6 +252,7 @@ class Runner:
 		with self._refills_lock:
 			if all(job_key(u) != job_key(url) for u in self._refills):
 				(self._refills.appendleft if first else self._refills.append)(url)
+		self._wake.set()
 
 	def _next_refill(self) -> str | None:
 		with self._refills_lock:
@@ -242,6 +266,7 @@ class Runner:
 				if job_key(url) not in keys:
 					keys.add(job_key(url))
 					self._links.append(url)
+		self._wake.set()
 
 	def remove_link(self, url: str) -> None:
 		with self._links_lock:
@@ -282,7 +307,9 @@ class Runner:
 	def stop(self) -> None:
 		"""Stops now: the job in progress is cancelled (its tab stays open). The browser stays open with its tabs."""
 		self._stop = True
+		self._stop_reason = self._stop_reason or ('stopped', 'Stopped by you. Your filled tabs stay open for review.')
 		self._resume.set()
+		self._wake.set()
 		self._set_state('stopping')
 		if self._loop and self._task:
 			self._loop.call_soon_threadsafe(self._task.cancel)
@@ -299,6 +326,8 @@ class Runner:
 
 	def _log(self, text: str, level: str = 'info') -> None:
 		getattr(logger, 'warning' if level == 'error' else 'info')(text)
+		if self.current.get('url'):  # the job's own story, kept in its record for History
+			self._job_log.append({'time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'text': text, 'level': level})
 		self._emit('log', text=text, level=level)
 
 	def _main(self) -> None:
@@ -311,12 +340,16 @@ class Runner:
 		except Exception as e:
 			logger.exception('runner failed')
 			self._log(f'Stopped: {e}', 'error')
+			self._stop_reason = ('error', str(e) or type(e).__name__)
 		finally:
 			with contextlib.suppress(Exception):
 				self._loop.run_until_complete(self._loop.shutdown_asyncgens())
 			self._loop.close()
 			self._loop = self._task = None
 			self.current = {}
+			kind, text = self._stop_reason or ('done', 'Finished.')
+			self.last_stop = {'kind': kind, 'text': text, 'time': datetime.now().strftime('%H:%M:%S')}
+			self._emit('stopped', text=text, stop_kind=kind)
 			self._set_state('idle')
 
 	async def _run(self) -> None:
@@ -334,65 +367,196 @@ class Runner:
 		boards = [] if self._links_only else [b for b in s.boards if b in BOARDS]
 		if boards and not self._refill_only:
 			blocked = await self._preflight(boards)
+			if blocked and not [b for b in boards if b not in blocked]:
+				self._log('Every selected board is blocked or logged out; only your job links are applied to.', 'error')
 			boards = [b for b in boards if b not in blocked]
 		rounds = dict.fromkeys(boards, 0)  # result pages searched per board
 		empty = dict.fromkeys(boards, 0)  # rounds in a row without a new job
+		failures = dict.fromkeys(boards, 0)  # searches in a row that ended on an error
 		board_index = 0
+		rests = 0  # rests in a row (searched everything again and found nothing new)
+		crashes = 0  # loop steps in a row that raised
 		while not self._stop:
-			await self._paused()
-			if self._stop:
-				break
-			if refill := self._next_refill():  # answered jobs first, also past the daily cap
-				await self._refill(refill, llm, writer)
-				continue
-			if self._refill_only:
-				break
-			if self.tracker.count_today() >= s.daily_cap:
-				self._log(f'Daily limit reached ({s.daily_cap} jobs). Review your open tabs; the count resets at midnight.')
-				break
-			with self._links_lock:
-				has_link = bool(self._links)
-			if has_link:  # the user's own links first, also ones added while the loop runs
-				if await self._hold_for_review():
+			try:
+				if crashes:
+					await asyncio.sleep(min(5 * crashes, 30))
+				await self._paused()
+				if self._stop:
+					break
+				searchable = [b for b in boards if failures[b] < MAX_SEARCH_FAILURES]
+				if self._errors_in_row >= MAX_ERRORS_IN_ROW and self._has_work(queue, searchable):
+					await self._hold_for_errors()  # something keeps failing: ask instead of burning jobs
+					llm, writer = self._reload_models(llm, writer)
 					continue
-				link = self._next_link()
-				if link and not self.tracker.seen(link):
-					await self._apply({'url': link, 'board': ''}, llm, writer)
-				continue
-			if not queue:
-				live = [b for b in boards if empty[b] < MAX_EMPTY_ROUNDS and rounds[b] < MAX_ROUNDS]
-				if not live:
-					if not boards:  # links only (or no board selected): the user's links are done
-						self._log('Done with your job links.')
-					else:
-						self._log(
+				if refill := self._next_refill():  # answered jobs first, also past the daily cap
+					await self._refill(refill, llm, writer)
+					continue
+				if self._refill_only:
+					self._stop_reason = ('done', 'Finished your answered applications.')
+					break
+				if self.tracker.count_today() >= self.settings.daily_cap:
+					text = f'Daily limit reached ({self.settings.daily_cap} jobs). Review your open tabs; the count resets at midnight.'
+					self._log(text)
+					self._stop_reason = ('cap', text)
+					break
+				with self._links_lock:
+					has_link = bool(self._links)
+				if has_link:  # the user's own links first, also ones added while the loop runs
+					if await self._hold_for_review():
+						continue
+					link = self._next_link()
+					if link and not self.tracker.seen(link):
+						await self._apply({'url': link, 'board': ''}, llm, writer)
+					continue
+				if not queue:
+					live = [
+						b
+						for b in boards
+						if empty[b] < MAX_EMPTY_ROUNDS and rounds[b] < MAX_ROUNDS and failures[b] < MAX_SEARCH_FAILURES
+					]
+					if not live:
+						if not boards:  # links only (or no board selected): the user's links are done
+							text = 'Done with your job links.'
+							self._log(text)
+							self._stop_reason = ('done', text)
+							break
+						searchable = [b for b in boards if failures[b] < MAX_SEARCH_FAILURES]
+						if not searchable:
+							text = f'Searching keeps failing on every board (last error: {self._last_error[:200]}).'
+							self._log(text, 'error')
+							self._stop_reason = ('error', text)
+							break
+						if self.settings.keep_searching and rests < MAX_REST_CYCLES:
+							rests += 1
+							await self._rest(self.settings.search_again_minutes)
+							rounds = dict.fromkeys(boards, 0)  # newest first again: new postings are on page 1
+							empty = dict.fromkeys(boards, 0)
+							continue
+						text = (
 							'No more new jobs matching your criteria on the selected boards (each was searched several '
 							'result pages deep). Widen the criteria, select more boards, or add job links on the Run tab.'
 						)
-					break
-				board = live[board_index % len(live)]
-				board_index += 1
-				rounds[board] += 1
-				found = await self._search(board, llm, rounds[board])
-				if found is None:  # interrupted (Take over): search this page again after Continue
-					rounds[board] -= 1
+						self._log(text)
+						self._stop_reason = ('done', text)
+						break
+					board = live[board_index % len(live)]
+					board_index += 1
+					rounds[board] += 1
+					try:
+						found = await self._search(board, llm, rounds[board])
+					except SearchFailed as e:
+						failures[board] += 1
+						self._note_error(str(e))
+						label = BOARDS[board][0]
+						if failures[board] >= MAX_SEARCH_FAILURES:
+							self._log(f'{label}: the search keeps failing; leaving it out of this run.', 'error')
+						continue
+					failures[board] = 0
+					self._errors_in_row = 0
+					if found is None:  # interrupted (Take over): search this page again after Continue
+						rounds[board] -= 1
+						continue
+					fresh = [j for j in found if not self.tracker.seen(j['url'])]
+					empty[board] = 0 if fresh else empty[board] + 1
+					if fresh:
+						rests = 0
+					queue.extend(fresh)
 					continue
-				fresh = [j for j in found if not self.tracker.seen(j['url'])]
-				empty[board] = 0 if fresh else empty[board] + 1
-				queue.extend(fresh)
-				continue
-			if await self._hold_for_review():
-				continue  # the user may have answered questions meanwhile: refills first
-			job = queue.popleft()
-			if self.tracker.seen(job['url']):
-				continue
-			await self._apply(job, llm, writer)
-		self._log(
-			'Done finishing your answered applications.'
-			if self._refill_only
-			else 'Loop finished. Your filled tabs stay open in the Jobify browser for review.'
-		)
+				if await self._hold_for_review():
+					continue  # the user may have answered questions meanwhile: refills first
+				job = queue.popleft()
+				if self.tracker.seen(job['url']):
+					continue
+				await self._apply(job, llm, writer)
+				crashes = 0
+			except asyncio.CancelledError:
+				raise
+			except Exception as e:  # one bad job or search never ends the whole run
+				logger.exception('loop step failed')
+				crashes += 1
+				if crashes >= MAX_CRASHES_IN_ROW:  # the same thing breaks every time: end with the reason
+					raise
+				self.current = {}
+				self._note_error(str(e) or type(e).__name__)
+				self._log(f'Something went wrong ({e}); Jobify carries on.', 'error')
+		if self._refill_only:
+			self._log('Done finishing your answered applications.')
+		else:
+			self._log('Loop finished. Your filled tabs stay open in the Jobify browser for review.')
 		self._log(self.summary())
+
+	def _has_work(self, queue: deque, boards: list[str]) -> bool:
+		"""Anything left that would run into the same error: a refill, a link, a found job, or a board to search."""
+		with self._links_lock, self._refills_lock:
+			return bool(self._refills or self._links or queue or (boards and not self._refill_only))
+
+	def _note_error(self, error: str) -> None:
+		"""A job or search ended on an error (not on the page). A key the provider refuses holds the loop at once."""
+		self._errors_in_row += 1
+		self._last_error = error
+		if MODEL_REJECTED.search(error):
+			self._errors_in_row = max(self._errors_in_row, MAX_ERRORS_IN_ROW)
+
+	def _reload_models(self, llm: Any, writer: Any) -> tuple[Any, Any]:
+		"""After the user fixed something in Setup: the new key / model is used without a restart."""
+		from jobapply.settings import Settings
+
+		try:
+			settings = Settings.load()
+			settings.job_urls = self.settings.job_urls
+			new = agent_llm(settings)
+		except Exception as e:  # still not usable: keep the old ones; the next error holds again
+			self._log(f'Setup is still not complete: {e}', 'error')
+			return llm, writer
+		self.settings = settings
+		return new, writer_model(new)
+
+	async def _hold_for_errors(self) -> None:
+		"""Jobs or searches keep failing on errors: hold (banner + sound) until the user clicks Continue."""
+		error = self._last_error or 'unknown error'
+		if MODEL_REJECTED.search(error):
+			reason = (
+				f'The AI provider refused the request ({error[:160]}). Check the key, model or plan in Setup > AI model, '
+				'save, then click Continue.'
+			)
+		else:
+			reason = (
+				f'{self._errors_in_row} jobs or searches in a row ended on an error (last: {error[:160]}). Check your '
+				'internet, the AI model in Setup and the Jobify browser, then click Continue.'
+			)
+		self._errors_in_row = 0
+		self._resume.clear()
+		self._set_state('held')
+		self.help = {'reason': reason, 'need': 'errors', 'url': '', 'tab': '', 'company': ''}
+		self._log(f'Needs you: {reason}', 'error')
+		self._emit('help', sound=True, wait_s=0, **self.help)
+		try:
+			await self._paused()
+		finally:
+			self.help = None
+			self._emit('help_end')
+		if self.state == 'held':
+			self._set_state('running')
+
+	async def _rest(self, minutes: int) -> None:
+		"""Nothing new on the boards right now: wait, then search again from the newest postings. Job links, answered
+		questions and Stop end the wait early."""
+		until = datetime.now().timestamp() + minutes * 60
+		at = datetime.fromtimestamp(until).strftime('%H:%M')
+		self._log(f'No new matching jobs right now. Jobify searches again at {at} (Setup > Jobs: keep searching).')
+		self.current = {'phase': 'rest', 'until': at}
+		self._emit('current', **self.current)
+		self._wake.clear()
+		try:
+			while not self._stop and datetime.now().timestamp() < until:
+				with self._links_lock, self._refills_lock:
+					if self._links or self._refills:
+						break
+				await asyncio.to_thread(self._wake.wait, 1.0)
+				self._wake.clear()
+		finally:
+			self.current = {}
+			self._emit('current')
 
 	def summary(self) -> str:
 		"""Today in one line: what is ready, what needs the user, what happened to the rest."""
@@ -591,15 +755,19 @@ class Runner:
 		self._log('Checking that you are logged in and not blocked on the boards and Gmail...')
 		for url, names in checks.items():
 			label = ' / '.join(dict.fromkeys(PREFLIGHT[n][0] for n in names))
-			tab, state = await asyncio.to_thread(self._page_state, url)
-			problem = page_problem(state, label)
-			if problem:
-				done = await self._alert_and_wait(problem, 'preflight', url, tab)
-				if done:  # look again: still blocked means the board is skipped
-					await asyncio.to_thread(self._close_tabs, [tab])
-					tab, state = await asyncio.to_thread(self._page_state, url, 0.5)
-					problem = page_problem(state, label)
-			await asyncio.to_thread(self._close_tabs, [tab])
+			try:
+				tab, state = await asyncio.to_thread(self._page_state, url)
+				problem = page_problem(state, label)
+				if problem:
+					done = await self._alert_and_wait(problem, 'preflight', url, tab)
+					if done:  # look again: still blocked means the board is skipped
+						await asyncio.to_thread(self._close_tabs, [tab])
+						tab, state = await asyncio.to_thread(self._page_state, url, 0.5)
+						problem = page_problem(state, label)
+				await asyncio.to_thread(self._close_tabs, [tab])
+			except Exception as e:  # a page that did not load is checked by the search itself
+				logger.warning('pre-flight check of %s failed: %s', url, e)
+				continue
 			if problem:
 				searchable = [n for n in names if n != 'gmail']
 				blocked.update(searchable)
@@ -623,9 +791,7 @@ class Runner:
 		def already_seen(url: str) -> bool:
 			return self.tracker.seen(url)
 
-		await self._start_browser()
-		mark = self.guard.mark() if self.guard else 0
-		await asyncio.to_thread(self._open_tab, start_url)
+		mark: int | None = None  # where this search's tabs start (None: none opened yet)
 		task = (
 			SEARCH_TASK.replace('{count}', str(SEARCH_BATCH))
 			.replace('{board}', label)
@@ -636,6 +802,9 @@ class Runner:
 			.replace('{age}', str(self.settings.max_job_age_days))
 		)
 		try:
+			await self._start_browser()
+			mark = self.guard.mark() if self.guard else 0
+			await asyncio.to_thread(self._open_tab, start_url)
 			result = await self._run_agent(task, FoundJobs, tools, SEARCH_MAX_STEPS, SEARCH_TIMEOUT_S)
 		except Interrupted as e:  # Take over (or stuck) during a search: no jobs from this round; the loop goes on
 			if e.reason == 'hold':
@@ -643,10 +812,21 @@ class Runner:
 				return None  # searched again: the user interrupted it
 			self._log(f'{label}: the search got stuck on this page; moving on.', 'error')
 			return []  # counts as an empty round, so a page that always sticks is not retried forever
+		except (asyncio.CancelledError, KeyboardInterrupt):
+			raise
+		except Exception as e:
+			logger.exception('search failed')
+			self._log(f'{label}: the search failed ({e}).', 'error')
+			raise SearchFailed(str(e) or type(e).__name__) from e
 		finally:
-			if self.guard:  # search tabs are not for review
-				await asyncio.to_thread(self._close_tabs, self.guard.tabs_since(mark))
+			if self.guard and mark is not None:  # search tabs are not for review
+				with contextlib.suppress(Exception):
+					await asyncio.to_thread(self._close_tabs, self.guard.tabs_since(mark))
 		output = result.structured_output
+		if output is None and result.status == 'error':  # the model or the browser failed: not "nothing new"
+			error = result.error or 'the search stopped on an error'
+			self._log(f'{label}: the search failed ({error[:200]}).', 'error')
+			raise SearchFailed(error)
 		found = output.jobs if output else []
 		if output and output.blocked:
 			self._log(f'{label}: {output.blocked}', 'error')
@@ -682,12 +862,23 @@ class Runner:
 			tone = tone_from_criteria(criteria) or s.cover_letter_tone
 			template = read_text(s.resume_template_path, 'resume template') if s.resume_template_path else None
 			self._log(f'Writing resume and cover letter for {company}...')
-			tailored = await documents.tailor(writer, profile, job_description, company, title, tone)
-			ws = self._ws()
-			paths = await asyncio.to_thread(
-				documents.write_documents, tailored, company, title, template, lambda h, p: print_pdf(ws, h, p)
-			)
+			with contextlib.suppress(Exception):  # the posting, for History, even when writing fails below
+				records.update(url, company=company, title=title, job_description=job_description)
+			try:
+				tailored = await documents.tailor(writer, profile, job_description, company, title, tone)
+				ws = self._ws()
+				paths = await asyncio.to_thread(
+					documents.write_documents, tailored, company, title, template, lambda h, p: print_pdf(ws, h, p)
+				)
+			except Exception as e:
+				logger.exception('documents failed')
+				self._log(f'Could not write the resume for {company}: {e}', 'error')
+				raise
 			docs.update(paths)
+			self._log(f'Resume and cover letter ready: {paths.get("folder", "")}')
+			with contextlib.suppress(Exception):
+				summary = tailored.job_summary.model_dump() if tailored.job_summary else {}
+				records.update(url, summary=summary, documents=dict(docs))
 			self.current.update(company=company, title=title)
 			self._emit('current', **self.current)
 			return docs
@@ -763,17 +954,19 @@ class Runner:
 		url = job['url']
 		self.current = {'phase': 'apply', 'url': url, 'company': job.get('company', ''), 'title': job.get('title', '')}
 		self._emit('current', **self.current)
+		self._job_log = []
 		self._log(f'Applying: {job.get("title") or url} {("at " + job["company"]) if job.get("company") else ""}'.strip())
 		docs: dict[str, str] = {}
 		asked: list[str] = []
 		tools = self._job_tools(url, docs, asked, writer)
-		await self._start_browser()
-		mark = self.guard.mark() if self.guard else 0
-		tab = await asyncio.to_thread(self._open_tab, url)
 		started = time.monotonic()
 		outcome: JobOutcome | None = None
 		error = ''
+		mark, tab = 0, ''
 		try:
+			await self._start_browser()
+			mark = self.guard.mark() if self.guard else 0
+			tab = await asyncio.to_thread(self._open_tab, url)
 			for attempt in (1, 2):
 				result = await self._run_agent(
 					APPLY_TASK.replace('{url}', url), JobOutcome, tools, APPLY_MAX_STEPS, APPLY_TIMEOUT_S
@@ -829,6 +1022,7 @@ class Runner:
 		job = {'url': url, 'company': row.company, 'title': row.title, 'board': row.board}
 		self.current = {'phase': 'apply', 'url': url, 'company': row.company, 'title': row.title}
 		self._emit('current', **self.current)
+		self._job_log = []
 		self._log(f'Finishing with your answers: {row.title or url}{" at " + row.company if row.company else ""}')
 		docs: dict[str, str] = {}
 		if row.resume and Path(row.resume).exists():  # the documents made for this job, not new ones
@@ -838,21 +1032,25 @@ class Runner:
 				docs['cover_letter_text'] = letter.read_text(encoding='utf-8').strip()
 		asked: list[str] = []
 		tools = self._job_tools(url, docs, asked, writer, skipped=skipped_questions(url))
-		await self._start_browser()
-		mark = self.guard.mark() if self.guard else 0
-		# every tab the job used (the posting, the application form on the company site, a Gmail draft)
-		open_tabs = [t for t in row.tab_id.split() if self.guard and t in self.guard.pages]
-		if open_tabs and self.guard:  # lock them all again and continue in the last one: the application form
-			self.guard.lock(open_tabs)
-			tab = open_tabs[-1]
-			await asyncio.to_thread(self._attach_tab, tab)
-			task = refill_task(url, row)
-		else:  # the tabs were closed: start the application again
-			tab = await asyncio.to_thread(self._open_tab, url)
-			task = APPLY_TASK.replace('{url}', url)
 		outcome: JobOutcome | None = None
 		error = ''
+		mark, tab = 0, ''
 		try:
+			await self._start_browser()
+			mark = self.guard.mark() if self.guard else 0
+			# every tab the job used (the posting, the application form on the company site, a Gmail draft)
+			open_tabs = [t for t in row.tab_id.split() if self.guard and t in self.guard.pages]
+			task = APPLY_TASK.replace('{url}', url)
+			if open_tabs and self.guard:  # lock them all again and continue in the last one: the application form
+				self.guard.lock(open_tabs)
+				tab = open_tabs[-1]
+				try:
+					await asyncio.to_thread(self._attach_tab, tab)
+					task = refill_task(url, row)
+				except Exception:  # closed meanwhile: start the application again
+					tab = await asyncio.to_thread(self._open_tab, url)
+			else:  # the tabs were closed: start the application again
+				tab = await asyncio.to_thread(self._open_tab, url)
 			result = await self._run_agent(task, JobOutcome, tools, APPLY_MAX_STEPS, APPLY_TIMEOUT_S)
 			outcome = result.structured_output
 			if outcome is None:
@@ -880,13 +1078,39 @@ class Runner:
 		update: bool = False,
 		status: str | None = None,
 	) -> None:
-		"""Audit the filled tabs, hand them to the user, and log the job (update: change its existing row)."""
+		"""Audit the filled tabs, hand them to the user, and log the job (update: change its existing row). Never
+		raises: a job that cannot be logged is reported, and the loop goes on."""
+		if outcome is None and error and status is None and error != 'stopped by you' and 'before it finished' not in error:
+			self._note_error(error)  # the model or the browser failed, not the page: counted toward a hold
+		elif outcome is not None:
+			self._errors_in_row = 0
+		try:
+			self._finish_job(job, tab, mark, outcome, docs, asked, error, update, status)
+		except Exception as e:
+			logger.exception('finishing the job failed')
+			self._log(f'Could not save this job to History: {e}', 'error')
+		finally:
+			self.current = {}
+			self._job_log = []
+
+	def _finish_job(
+		self,
+		job: dict,
+		tab: str,
+		mark: int,
+		outcome: JobOutcome | None,
+		docs: dict,
+		asked: list[str],
+		error: str,
+		update: bool,
+		status: str | None,
+	) -> None:
 		tabs = self.guard.tabs_since(mark) if self.guard else [tab]
 		if update:  # the job's earlier tabs that are still open, then the ones this run opened
 			before = (self.tracker.latest(job['url']) or Row()).tab_id.split()
 			kept = [t for t in before if not self.guard or t in self.guard.pages]
 			tabs = [*kept, *(t for t in tabs if t not in kept)]
-			if tab not in tabs:
+			if tab and tab not in tabs:
 				tabs.insert(0, tab)
 		status = status or (outcome.status if outcome else 'failed')
 		if status in ('filled', 'email_drafted', 'needs_input', 'failed') and self.browser is not None:
@@ -929,7 +1153,8 @@ class Runner:
 			self._close_tabs(tabs)
 			tabs = []
 		elif self.guard:  # the user reviews and submits in these tabs
-			self.guard.release(tabs)
+			with contextlib.suppress(Exception):
+				self.guard.release(tabs)
 		unique: dict[str, str] = {}
 		for q in asked:  # the questions in Questions, once each however they were punctuated
 			unique.setdefault(norm_question(q), q)
@@ -946,12 +1171,49 @@ class Runner:
 			'check': check.get('summary', ''),
 			'screenshot': check.get('screenshot', ''),
 		}
+		self._save_record(job, outcome, docs, values, check)
 		if update:
-			row = self.tracker.update(job['url'], **values)
+			try:
+				row = self.tracker.update(job['url'], **values)
+			except TrackerLocked:
+				raise
+			except ValueError:  # its row is gone (the file was edited): log it as new
+				row = self.tracker.add(Row(url=job['url'], **values))
 		else:
 			row = self.tracker.add(Row(url=job['url'], **values))
-		self.current = {}
 		self._emit('job', row=row.__dict__, today=self.tracker.count_today(), cap=self.settings.daily_cap)
+
+	def _save_record(self, job: dict, outcome: JobOutcome | None, docs: dict, values: dict, check: dict) -> None:
+		"""The job's A-to-Z for History: what it was about, what was filled and attached, and what happened."""
+		try:
+			url = job['url']
+			before = records.load(url)
+			summary = {} if (before.get('summary') or {}).get('about') else {'about': outcome.about if outcome else ''}
+			submitted = {}
+			if check.get('page_url') or check.get('fields') or check.get('files'):
+				submitted = {
+					'fields': check.get('fields', []),
+					'files': check.get('files', []),
+					'page_url': check.get('page_url', ''),
+					'page_title': check.get('page_title', ''),
+				}
+			records.update(
+				url,
+				timeline=list(self._job_log),
+				company=values['company'],
+				title=values['title'],
+				board=values['board'],
+				status=values['status'],
+				notes=values['notes'],
+				check=values['check'],
+				screenshot=values['screenshot'],
+				summary=summary,
+				documents={k: v for k, v in docs.items() if isinstance(v, str)},
+				submitted=submitted,
+				questions=values['unanswered_questions'].split(' | ') if values['unanswered_questions'] else [],
+			)
+		except Exception as e:
+			logger.warning('job record failed: %s', e)
 
 	def focus_tab(self, tab: str) -> bool:
 		"""Bring a job's tab to the front for review."""

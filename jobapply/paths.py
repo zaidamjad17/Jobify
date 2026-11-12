@@ -35,3 +35,25 @@ def resource(name: str) -> Path:
 	"""A file shipped with the app (templates/, ui/), also inside a PyInstaller bundle."""
 	base = Path(getattr(sys, '_MEIPASS', '')) / 'jobapply' if getattr(sys, 'frozen', False) else Path(__file__).parent
 	return base / name
+
+
+def replace_retrying(tmp: Path, target: Path, attempts: int = 20, wait_s: float = 0.25) -> None:
+	"""tmp.replace(target), retried for a few seconds: on Windows a file open in Excel, or being read by an antivirus
+	scanner or a backup tool, refuses to be replaced for a moment ("PermissionError: [WinError 5]")."""
+	import time
+
+	for attempt in range(attempts):
+		try:
+			tmp.replace(target)
+			return
+		except PermissionError:
+			if attempt == attempts - 1:
+				raise
+			time.sleep(wait_s)
+
+
+def write_text_atomic(path: Path, text: str, encoding: str = 'utf-8') -> None:
+	"""Write a temp file next to path, then swap it in: a crash never leaves half a file."""
+	tmp = path.with_name(path.name + '.tmp')
+	tmp.write_text(text, encoding=encoding)
+	replace_retrying(tmp, path)

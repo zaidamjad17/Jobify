@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from jobapply.paths import replace_retrying
+
 SAVED_ANSWERS = '## Saved answers'
 MAX_PROFILE_CHARS = 60_000  # a profile is a few pages; this keeps a pasted CV dump from filling the model's context
 
@@ -202,7 +204,7 @@ class Questions:
 	def _write(self, questions: list[Question]) -> None:
 		tmp = self.path.with_suffix('.tmp')
 		tmp.write_text(json.dumps([asdict(q) for q in questions], indent=2), encoding='utf-8')
-		tmp.replace(self.path)
+		replace_retrying(tmp, self.path)
 
 	def ask(self, question: Question) -> Question:
 		"""The same question asked again (another job) is one entry, counted."""

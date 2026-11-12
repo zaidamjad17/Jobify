@@ -214,17 +214,50 @@ FINAL_CHECK_JS = r"""
 		const text = (el.innerText || '').replace(/\s+/g, ' ').trim();
 		if (text && text.length < 200 && visible(el) && !errors.includes(text)) errors.push(text);
 	}
-	return JSON.stringify({ empty: [...new Set(empty)].slice(0, 15), errors: errors.slice(0, 8) });
+	// what the form holds now: the record of what Jobify filled in (passwords never)
+	const fields = [], files = [], seen = new Set();
+	const question = el => {
+		const set = el.closest('fieldset'); const legend = set && set.querySelector('legend');
+		if (legend && legend.innerText.trim()) return legend.innerText;
+		const group = el.closest('[role=radiogroup], [role=group]');
+		if (group) { const id = group.getAttribute('aria-labelledby'); const l = id && document.getElementById(id);
+			if (l) return l.innerText; if (group.getAttribute('aria-label')) return group.getAttribute('aria-label'); }
+		const box = el.closest('div, li'); const prev = box && box.parentElement && box.parentElement.previousElementSibling;
+		return prev ? prev.innerText : '';
+	};
+	for (const el of document.querySelectorAll('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=password]), textarea, select')) {
+		if (el.type === 'file') { for (const f of (el.files || [])) files.push(f.name); continue; }
+		let label = labelOf(el), value = '', kind = el.tagName.toLowerCase() === 'select' ? 'select' : (el.type || 'text');
+		if (el.type === 'checkbox' || el.type === 'radio') {
+			if (!el.checked) continue;
+			const q = question(el).replace(/\s+/g, ' ').trim();
+			value = label || el.value; label = q || el.name || label;
+		} else if (kind === 'select') {
+			const o = el.selectedOptions && el.selectedOptions[0];
+			value = o && el.value ? o.text : '';
+		} else value = String(el.value || '');
+		value = value.replace(/\s+/g, ' ').trim();
+		if (!value) continue;
+		label = (label || el.name || el.id || kind).replace(/\s*\*\s*$/, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+		const key = label + '|' + value;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		fields.push({ label, value: value.slice(0, 2000), kind });
+		if (fields.length >= 80) break;
+	}
+	return JSON.stringify({ empty: [...new Set(empty)].slice(0, 15), errors: errors.slice(0, 8), fields, files,
+		page_url: location.href, page_title: document.title });
 })()
 """
 
 
 def final_check(ws_url: str, tab: str, screenshot_path) -> dict:
 	"""The form as Jobify left it: required fields still empty, visible error messages, and a screenshot.
-	-> {'empty': [...], 'errors': [...], 'summary': str, 'screenshot': str}"""
+	-> {'empty': [...], 'errors': [...], 'summary': str, 'screenshot': str, 'fields': [{label, value, kind}],
+	'files': [names of the uploaded files], 'page_url': str, 'page_title': str}"""
 	import base64
 
-	result: dict = {'empty': [], 'errors': [], 'summary': '', 'screenshot': ''}
+	result: dict = {'empty': [], 'errors': [], 'summary': '', 'screenshot': '', 'fields': [], 'files': []}
 	with CDP(ws_url) as cdp:
 		session = cdp.send('Target.attachToTarget', targetId=tab, flatten=True)['sessionId']
 		try:

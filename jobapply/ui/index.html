@@ -7,222 +7,545 @@
 <link rel="icon" type="image/png" href="logo.png">
 <style>
 	:root {
-		--bg: #f4f6f9; --panel: #ffffff; --ink: #18212b; --muted: #5d6b7a; --line: #dfe5ec;
-		--accent: #c8501d; --accent-ink: #ffffff; --ok: #1d7a46; --warn: #a15c00; --bad: #b42318; --chip: #eef3f8; --brand: #f06a2f;
+		color-scheme: light;
+		--bg: #f4f5f9; --panel: #ffffff; --panel-2: #f9fafc; --ink: #121a24; --ink-2: #2b3644; --muted: #667487; --faint: #94a0b0;
+		--line: #e5e9f0; --line-2: #d6dce6; --chip: #eef1f6; --hover: #f1f4f9;
+		--accent: #e5602a; --accent-2: #f07a3c; --accent-ink: #ffffff; --accent-soft: #fdeee6;
+		--ok: #15803d; --warn: #b45309; --bad: #dc2626; --info: #2563eb;
+		--side: #0f1621; --side-2: #1a2330; --side-ink: #e8edf4; --side-muted: #8b98aa;
+		--canvas: #e3e7ee; --shadow: 0 1px 2px rgba(16, 24, 40, .05), 0 1px 3px rgba(16, 24, 40, .06);
+		--shadow-lg: 0 24px 60px -12px rgba(16, 24, 40, .28); --radius: 14px;
 	}
 	@media (prefers-color-scheme: dark) {
-		:root { --bg: #11161c; --panel: #19212a; --ink: #e6edf3; --muted: #9aa8b6; --line: #2a3542;
-			--accent: #f37a45; --accent-ink: #0d1116; --ok: #4cc287; --warn: #e3a344; --bad: #f07167; --chip: #223040; }
+		:root {
+			color-scheme: dark;
+			--bg: #0d1218; --panel: #151c25; --panel-2: #19212b; --ink: #e7edf4; --ink-2: #c9d3de; --muted: #93a1b2; --faint: #6b7a8c;
+			--line: #242f3c; --line-2: #2f3b4a; --chip: #1f2935; --hover: #1c2530;
+			--accent: #f47a43; --accent-2: #ff8f5a; --accent-ink: #160b05; --accent-soft: #33200f;
+			--ok: #4ade80; --warn: #fbbf24; --bad: #f87171; --info: #60a5fa;
+			--side: #090d12; --side-2: #141b24; --side-ink: #e7edf4; --side-muted: #7f8c9d;
+			--canvas: #0a0e13; --shadow: 0 1px 2px rgba(0, 0, 0, .3); --shadow-lg: 0 24px 60px -12px rgba(0, 0, 0, .7);
+		}
 	}
 	* { box-sizing: border-box; }
-	body { margin: 0; font: 14px/1.45 "Segoe UI", system-ui, -apple-system, Arial, sans-serif; background: var(--bg); color: var(--ink); }
-	header { display: flex; align-items: center; gap: 18px; padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
-	header h1 { display: flex; align-items: center; gap: 9px; font-size: 19px; margin: 0; letter-spacing: .1px; font-weight: 700; }
-	header h1 img { width: 30px; height: 30px; display: block; }
-	header h1 b { color: var(--brand); font-weight: inherit; }
-	nav { display: flex; gap: 4px; }
-	nav button { background: none; border: 0; color: var(--muted); padding: 7px 12px; border-radius: 6px; cursor: pointer; font: inherit; }
-	nav button.on { background: var(--chip); color: var(--ink); font-weight: 600; }
-	nav .badge { background: var(--bad); color: #fff; border-radius: 9px; padding: 0 6px; font-size: 11px; margin-left: 4px; }
+	[hidden] { display: none !important; }
+	html, body { height: 100%; }
+	body { margin: 0; font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+		background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased; }
+	body.noscroll { overflow: hidden; }
+	h1, h2, h3, h4 { font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; letter-spacing: -.01em; }
+	a { color: var(--accent); }
+	.i { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; flex: none; vertical-align: -3px; }
+
+	/* layout */
+	.app { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }
+	aside.side { position: sticky; top: 0; height: 100vh; background: var(--side); color: var(--side-ink); display: flex; flex-direction: column; padding: 18px 14px; gap: 6px; }
+	.brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 18px; }
+	.brand img { width: 34px; height: 34px; border-radius: 9px; display: block; }
+	.brand .name { font-size: 20px; font-weight: 700; letter-spacing: -.02em; }
+	.brand .name b { color: var(--accent-2); font-weight: inherit; }
+	nav { display: flex; flex-direction: column; gap: 2px; }
+	nav button { display: flex; align-items: center; gap: 11px; width: 100%; background: none; border: 0; color: var(--side-muted); padding: 10px 12px;
+		border-radius: 10px; cursor: pointer; font: inherit; font-weight: 500; text-align: left; transition: background .15s, color .15s; }
+	nav button .i { width: 18px; height: 18px; }
+	nav button:hover { background: var(--side-2); color: var(--side-ink); }
+	nav button.on { background: var(--side-2); color: #fff; box-shadow: inset 3px 0 0 var(--accent-2); }
+	nav button .lbl { flex: 1; }
+	nav .badge { background: var(--accent); color: #fff; border-radius: 10px; padding: 0 7px; font-size: 11.5px; font-weight: 700; line-height: 19px; min-width: 20px; text-align: center; }
+	.side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 12px; padding: 14px 8px 2px; border-top: 1px solid var(--side-2); }
+	.side-foot .count { font-variant-numeric: tabular-nums; color: var(--side-muted); font-size: 12.5px; display: flex; justify-content: space-between; align-items: baseline; }
+	.side-foot .count b { color: var(--side-ink); font-size: 18px; font-weight: 700; }
+	.side-foot .meter { background: var(--side-2); }
+	.side-foot .ver { color: var(--side-muted); font-size: 11.5px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+	main { padding: 26px 32px 60px; min-width: 0; }
+	.page { max-width: 1160px; margin: 0 auto; }
+	.pagehead { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 18px; flex-wrap: wrap; }
+	.pagehead h1 { margin: 0; font-size: 24px; font-weight: 700; }
+	.pagehead p { margin: 3px 0 0; color: var(--muted); }
+	section.tab { display: none; }
+	section.tab.on { display: block; animation: fade .18s ease-out; }
+	@keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+	/* basics */
+	.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 18px 20px; margin-bottom: 16px; box-shadow: var(--shadow); }
+	.card > h2, .cardhead h2 { font-size: 15.5px; margin: 0 0 4px; font-weight: 650; }
+	.cardhead { display: flex; align-items: center; gap: 10px; justify-content: space-between; margin-bottom: 10px; flex-wrap: wrap; }
+	.sub { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+	.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 	.spacer { flex: 1; }
-	.count { font-variant-numeric: tabular-nums; color: var(--muted); }
-	.count b { color: var(--ink); font-size: 16px; }
-	main { padding: 18px 20px; max-width: 1180px; margin: 0 auto; }
-	section { display: none; }
-	section.on { display: block; }
-	.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; }
-	.card h2 { font-size: 15px; margin: 0 0 10px; }
-	.row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-	.grid { display: grid; grid-template-columns: 180px 1fr; gap: 10px 14px; align-items: center; }
+	.grid { display: grid; grid-template-columns: 190px 1fr; gap: 12px 16px; align-items: center; }
+	.grid > label, .provider-fields > label { color: var(--ink-2); font-weight: 500; }
 	label { color: var(--muted); }
-	input[type=text], input[type=password], input[type=number], textarea, select {
-		width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink); font: inherit; }
-	textarea { min-height: 70px; resize: vertical; }
-	button.btn { background: var(--accent); color: var(--accent-ink); border: 0; padding: 8px 16px; border-radius: 6px; cursor: pointer; font: inherit; font-weight: 600; }
-	button.btn.ghost { background: var(--chip); color: var(--ink); font-weight: 500; }
-	button.btn.danger { background: var(--bad); color: #fff; }
-	button.btn:disabled { opacity: .45; cursor: default; }
-	.path { font-family: Consolas, monospace; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 520px; }
-	.state { padding: 3px 10px; border-radius: 12px; background: var(--chip); font-weight: 600; text-transform: capitalize; }
-	.state.running { color: var(--ok); } .state.paused { color: var(--warn); } .state.stopping { color: var(--bad); }
-	.log { font-family: Consolas, monospace; font-size: 12.5px; max-height: 340px; overflow: auto; background: var(--bg); border-radius: 6px; padding: 8px 10px; }
-	.log div { padding: 1px 0; white-space: pre-wrap; }
-	.log .error { color: var(--bad); } .log .blocked { color: var(--warn); }
-	.log time { color: var(--muted); margin-right: 8px; }
-	table { width: 100%; border-collapse: collapse; font-size: 13px; }
-	th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
-	th { color: var(--muted); font-weight: 600; position: sticky; top: 0; background: var(--panel); }
-	td a { color: var(--accent); cursor: pointer; text-decoration: none; }
-	.pill { padding: 1px 8px; border-radius: 10px; font-size: 12px; background: var(--chip); white-space: nowrap; }
-	.pill.filled, .pill.email_drafted { color: var(--ok); } .pill.needs_input { color: var(--warn); }
-	.pill.failed { color: var(--bad); } .pill.skipped { color: var(--muted); }
-	.pill.submitted { color: var(--ok); font-weight: 600; }
-	button.btn.small { padding: 2px 8px; font-size: 12px; }
-	.q { border-top: 1px solid var(--line); padding: 12px 0; }
-	.q:first-child { border-top: 0; }
-	.q .meta { color: var(--muted); font-size: 12px; margin: 2px 0 8px; }
-	.boards { display: flex; flex-wrap: wrap; gap: 10px 18px; }
-	.hint { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
-	.toast { position: fixed; bottom: 18px; right: 18px; background: var(--ink); color: var(--panel); padding: 10px 14px; border-radius: 8px; display: none; max-width: 460px; }
-	.empty { color: var(--muted); padding: 10px 0; }
-	.helpbar { position: sticky; top: 0; z-index: 5; display: flex; gap: 14px; align-items: center; justify-content: space-between;
-		background: #fff3cd; color: #4a3500; border: 1px solid #e0b400; border-radius: 10px; padding: 12px 16px; margin-bottom: 14px; }
-	.helpbar[hidden] { display: none; }
-	.state.held { color: var(--warn); }
-	.meter { height: 8px; background: var(--chip); border-radius: 4px; overflow: hidden; margin: 4px 0; }
-	.meter div { height: 100%; width: 0; background: var(--ok); transition: width .3s; }
-	.why { margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+	input[type=text], input[type=password], input[type=number], input[type=search], textarea, select {
+		width: 100%; padding: 9px 11px; border: 1px solid var(--line-2); border-radius: 9px; background: var(--panel); color: var(--ink); font: inherit;
+		transition: border-color .15s, box-shadow .15s; }
+	input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); }
+	textarea { min-height: 84px; resize: vertical; }
+	.btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; background: var(--accent); color: var(--accent-ink); border: 1px solid transparent;
+		padding: 8px 16px; border-radius: 9px; cursor: pointer; font: inherit; font-weight: 600; white-space: nowrap; transition: background .15s, transform .05s, box-shadow .15s, opacity .15s; }
+	.btn:not(:disabled):hover { background: var(--accent-2); }
+	.btn:not(:disabled):active { transform: translateY(1px); }
+	.btn.ghost { background: var(--panel); color: var(--ink); border-color: var(--line-2); font-weight: 500; }
+	.btn.ghost:not(:disabled):hover { background: var(--hover); }
+	.btn.danger { background: var(--panel); color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, var(--line-2)); }
+	.btn.danger:not(:disabled):hover { background: color-mix(in srgb, var(--bad) 8%, var(--panel)); }
+	.btn.ok { background: var(--ok); color: #fff; }
+	.btn.big { padding: 12px 24px; font-size: 15px; border-radius: 11px; box-shadow: 0 6px 16px -6px color-mix(in srgb, var(--accent) 70%, transparent); }
+	.btn.small { padding: 4px 10px; font-size: 12.5px; border-radius: 8px; gap: 5px; }
+	.btn.small .i { width: 14px; height: 14px; }
+	.btn:disabled { opacity: .42; cursor: default; box-shadow: none; }
+	.ib { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 8px; border: 1px solid var(--line-2); background: var(--panel); color: var(--ink); cursor: pointer; }
+	.ib:hover { background: var(--hover); }
+	.x { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 18px; line-height: 1; padding: 4px 8px; border-radius: 7px; }
+	.x:hover { background: var(--chip); color: var(--bad); }
+	.hint { color: var(--muted); font-size: 12.5px; }
+	.path { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 460px;
+		background: var(--chip); padding: 4px 9px; border-radius: 7px; }
+	.empty { color: var(--muted); padding: 18px 4px; text-align: center; }
+	.meter { height: 7px; background: var(--chip); border-radius: 4px; overflow: hidden; }
+	.meter div { height: 100%; width: 0; background: var(--ok); border-radius: 4px; transition: width .4s; }
+	.side-foot .meter div { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+
+	/* state + pills */
+	.state { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 8px; border-radius: 20px; background: var(--side-2); color: var(--side-muted);
+		font-weight: 600; font-size: 12px; text-transform: capitalize; }
+	.state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+	.state.running, .state.starting { color: #4ade80; } .state.running::before { animation: pulse 1.6s infinite; }
+	.state.paused, .state.held { color: #fbbf24; } .state.stopping { color: #f87171; }
+	@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(74, 222, 128, .6); } 70% { box-shadow: 0 0 0 7px rgba(74, 222, 128, 0); } 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); } }
+	.pill { --c: var(--muted); display: inline-flex; align-items: center; gap: 5px; padding: 2px 10px; border-radius: 20px; font-size: 12px; font-weight: 600; white-space: nowrap;
+		color: var(--c); background: color-mix(in srgb, var(--c) 12%, transparent); }
+	.pill::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+	.pill.filled, .pill.email_drafted { --c: var(--info); } .pill.needs_input { --c: var(--warn); } .pill.failed { --c: var(--bad); }
+	.pill.submitted { --c: var(--ok); } .pill.skipped, .pill.waiting { --c: var(--faint); } .pill.applying { --c: var(--accent); }
+
+	/* help banner */
+	.helpbar { position: sticky; top: 12px; z-index: 20; display: flex; gap: 14px; align-items: center; justify-content: space-between; max-width: 1160px; margin: 0 auto 16px;
+		background: linear-gradient(90deg, #fff4d6, #ffe9b8); color: #4a3200; border: 1px solid #f0c24b; border-radius: var(--radius); padding: 14px 18px;
+		box-shadow: 0 10px 30px -10px rgba(180, 120, 0, .5); animation: shake .5s; }
+	.helpbar .hint { color: #7a5600; }
+	.helpbar .ico { width: 38px; height: 38px; border-radius: 50%; background: #f5b400; color: #fff; display: grid; place-items: center; flex: none; font-weight: 800; font-size: 18px; }
+	.helpbar .btn { background: #1f2937; color: #fff; }
+	.helpbar .btn:not(:disabled):hover { background: #000; }
+	@keyframes shake { 0%, 100% { transform: none; } 20% { transform: translateX(-4px); } 40% { transform: translateX(4px); } 60% { transform: translateX(-2px); } 80% { transform: translateX(2px); } }
+
+	/* run page */
+	.notice { display: flex; gap: 12px; align-items: flex-start; border-radius: var(--radius); padding: 13px 16px; margin-bottom: 16px; border: 1px solid var(--line);
+		background: var(--panel); box-shadow: var(--shadow); --c: var(--info); border-left: 4px solid var(--c); }
+	.notice.error { --c: var(--bad); } .notice.done, .notice.cap { --c: var(--ok); } .notice.stopped { --c: var(--faint); }
+	.notice .ttl { font-weight: 650; }
+	.notice .body { flex: 1; }
+	.hero { display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: center; padding: 22px 24px; position: relative; overflow: hidden; }
+	.hero::after { content: ""; position: absolute; right: -60px; top: -80px; width: 260px; height: 260px; border-radius: 50%;
+		background: radial-gradient(circle, color-mix(in srgb, var(--accent) 16%, transparent), transparent 70%); pointer-events: none; }
+	.now { display: flex; align-items: center; gap: 14px; min-width: 0; }
+	.now .dot { width: 46px; height: 46px; border-radius: 13px; display: grid; place-items: center; background: var(--chip); color: var(--muted); flex: none; }
+	.now .dot .i { width: 22px; height: 22px; }
+	.now.busy .dot { background: var(--accent-soft); color: var(--accent); }
+	.now.busy .dot .i { animation: spin 2.4s linear infinite; }
+	.now.rest .dot { background: color-mix(in srgb, var(--info) 12%, transparent); color: var(--info); }
+	.now .lbl { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 600; }
+	.now .current { font-size: 17px; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; z-index: 1; }
+	.hero .hint { grid-column: 1 / -1; margin: 0; }
+	.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 16px; }
+	.stat { --c: var(--info); background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; cursor: pointer; box-shadow: var(--shadow);
+		transition: transform .12s, box-shadow .12s, border-color .12s; text-align: left; font: inherit; color: inherit;
+		display: flex; flex-direction: column; justify-content: flex-start; align-items: flex-start; }
+	.stat:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--c) 45%, var(--line)); }
+	.stat .n { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.15; color: var(--c); }
+	.stat .t { color: var(--muted); font-size: 12.5px; font-weight: 500; }
+	.stat.need { --c: var(--warn); } .stat.subm { --c: var(--ok); } .stat.other { --c: var(--faint); }
+	.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 16px; align-items: start; }
+	.cols .card { margin-bottom: 0; }
+	.links { margin-top: 12px; max-height: 300px; overflow: auto; }
+	.links .link { display: flex; gap: 10px; align-items: center; padding: 7px 2px; border-top: 1px solid var(--line); font-size: 13px; }
+	.links .link a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); text-decoration: none; }
+	.log { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12.3px; height: 404px; overflow: auto; background: var(--panel-2); border: 1px solid var(--line);
+		border-radius: 10px; padding: 8px 4px; }
+	.log div { padding: 3px 10px; white-space: pre-wrap; border-radius: 6px; display: flex; gap: 10px; }
+	.log div:hover { background: var(--hover); }
+	.log .error { color: var(--bad); } .log .blocked { color: var(--warn); } .log .good { color: var(--ok); }
+	.log time { color: var(--faint); flex: none; }
+	.log .empty { display: block; font-family: inherit; }
+	.onboard .steps { display: grid; gap: 8px; margin-top: 6px; }
+	.step { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--panel-2); border: 1px solid var(--line); }
+	.step .chk { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center; border: 2px solid var(--line-2); color: transparent; flex: none; }
+	.step.done .chk { background: var(--ok); border-color: var(--ok); color: #fff; }
+	.step.done .st { color: var(--muted); text-decoration: line-through; }
+	.step .st { font-weight: 600; } .step .sd { color: var(--muted); font-size: 12.5px; }
+	.step .txt { flex: 1; min-width: 0; }
+	.progress-ring { font-weight: 700; color: var(--accent); }
+
+	/* questions */
+	.q { border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-top: 10px; background: var(--panel-2); }
+	.q .qt { font-weight: 600; font-size: 14.5px; }
+	.q .meta { color: var(--muted); font-size: 12px; margin: 3px 0 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+	.q .meta .co { background: var(--chip); color: var(--ink-2); padding: 1px 8px; border-radius: 6px; font-weight: 500; }
+	.q.login { border-color: color-mix(in srgb, var(--warn) 40%, var(--line)); }
+
+	/* history */
+	.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 4px 0 14px; }
+	.search { position: relative; flex: 1; min-width: 220px; max-width: 360px; }
+	.search .i { position: absolute; left: 11px; top: 11px; color: var(--faint); }
+	.search input { padding-left: 34px; }
+	.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+	.chip { border: 1px solid var(--line-2); background: var(--panel); color: var(--ink-2); padding: 5px 12px; border-radius: 20px; cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 500; }
+	.chip:hover { background: var(--hover); }
+	.chip.on { background: var(--ink); color: var(--panel); border-color: var(--ink); }
+	.chip .c { opacity: .65; margin-left: 4px; font-variant-numeric: tabular-nums; }
+	.why { margin: 2px 0 0; font-size: 13px; color: var(--warn); }
+	.why:empty { display: none; }
+	.jobs { display: flex; flex-direction: column; gap: 8px; }
+	.job { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; gap: 14px; align-items: center; padding: 13px 16px; border: 1px solid var(--line); border-radius: 12px;
+		background: var(--panel); cursor: pointer; transition: border-color .12s, box-shadow .12s, transform .12s; }
+	.job:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); box-shadow: 0 6px 20px -10px rgba(16, 24, 40, .25); }
+	.avatar { width: 44px; height: 44px; border-radius: 11px; display: grid; place-items: center; font-weight: 700; font-size: 17px; color: #fff; flex: none; }
+	.job .co { font-weight: 650; font-size: 14.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.job .ti { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.job .mt { color: var(--muted); font-size: 12px; display: flex; gap: 6px 12px; flex-wrap: wrap; align-items: center; margin-top: 3px; }
+	.job .mt .tag { display: inline-flex; gap: 4px; align-items: center; }
+	.job .mt .tag .i { width: 13px; height: 13px; }
+	.job .note { color: var(--muted); font-size: 12.5px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.job .checkok, .job .checkwarn { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+	.job .right { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+	.job .acts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+	.lnk { background: none; border: 0; padding: 2px 4px; color: var(--accent); cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600; border-radius: 5px; text-decoration: none; }
+	.lnk:hover { background: var(--accent-soft); }
 	.checkok { color: var(--ok); font-size: 12.5px; margin-top: 3px; }
 	.checkwarn { color: var(--warn); font-size: 12.5px; margin-top: 3px; }
+
+	/* detail panel */
+	.detail { position: fixed; inset: 0; z-index: 50; }
+	.backdrop { position: absolute; inset: 0; background: rgba(10, 15, 22, .48); backdrop-filter: blur(2px); animation: fadein .2s; }
+	@keyframes fadein { from { opacity: 0; } }
+	.sheet { position: absolute; top: 0; right: 0; bottom: 0; width: min(1040px, 94vw); background: var(--bg); box-shadow: var(--shadow-lg); display: flex; flex-direction: column;
+		animation: slidein .26s cubic-bezier(.2, .8, .2, 1); border-left: 1px solid var(--line); }
+	@keyframes slidein { from { transform: translateX(40px); opacity: 0; } }
+	.dhead { display: flex; gap: 14px; align-items: flex-start; padding: 20px 24px 14px; background: var(--panel); }
+	.dhead .avatar { width: 52px; height: 52px; font-size: 21px; border-radius: 13px; }
+	.dtitle { flex: 1; min-width: 0; }
+	.dtitle h2 { margin: 0; font-size: 21px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.dtitle .tt { color: var(--ink-2); font-size: 15px; }
+	.dmeta { display: flex; gap: 8px 14px; flex-wrap: wrap; align-items: center; color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+	.dactions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; max-width: 46%; }
+	.dtabs { display: flex; gap: 4px; padding: 0 20px; background: var(--panel); border-bottom: 1px solid var(--line); }
+	.dtabs button { background: none; border: 0; border-bottom: 2px solid transparent; padding: 10px 14px; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; display: inline-flex; gap: 7px; align-items: center; }
+	.dtabs button:hover { color: var(--ink); }
+	.dtabs button.on { color: var(--ink); border-bottom-color: var(--accent); }
+	.dbody { flex: 1; min-height: 0; position: relative; }
+	.dpane { display: none; position: absolute; inset: 0; overflow: auto; padding: 20px 24px 30px; }
+	.dpane.on { display: block; }
+	.dpane.full { padding: 0; display: none; }
+	.dpane.full.on { display: flex; flex-direction: column; }
+	.sect { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
+	.sect h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 700; display: flex; align-items: center; gap: 7px; }
+	.sect p { margin: 0 0 6px; }
+	.about { font-size: 15px; line-height: 1.6; color: var(--ink-2); }
+	.facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+	.fact { background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 9px 12px; }
+	.fact .k { color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; font-weight: 600; }
+	.fact .v { font-weight: 600; overflow-wrap: anywhere; }
+	ul.list { margin: 0; padding-left: 20px; } ul.list li { margin: 3px 0; }
+	ul.match { list-style: none; padding: 0; margin: 0; } ul.match li { display: flex; gap: 8px; margin: 5px 0; }
+	ul.match .i { color: var(--ok); margin-top: 3px; }
+	.two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+	.two .sect { margin-bottom: 14px; }
+	.timeline { position: relative; margin: 2px 0 0 6px; padding-left: 18px; border-left: 2px solid var(--line); }
+	.timeline div { position: relative; padding: 3px 0 7px; font-size: 13px; }
+	.timeline div::before { content: ""; position: absolute; left: -24px; top: 9px; width: 10px; height: 10px; border-radius: 50%; background: var(--panel); border: 2px solid var(--faint); }
+	.timeline div.error::before { border-color: var(--bad); } .timeline div.error { color: var(--bad); }
+	.timeline time { color: var(--faint); font-family: Consolas, monospace; font-size: 12px; margin-right: 8px; }
+	details.jd summary { cursor: pointer; font-weight: 600; color: var(--ink-2); }
+	details.jd .txt { white-space: pre-wrap; margin-top: 10px; color: var(--ink-2); font-size: 13.5px; max-height: 520px; overflow: auto; }
+	table.fields { width: 100%; border-collapse: collapse; font-size: 13px; }
+	table.fields td { padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+	table.fields td:first-child { color: var(--muted); width: 38%; font-weight: 500; }
+	table.fields td:last-child { overflow-wrap: anywhere; white-space: pre-wrap; }
+	table.fields tr:last-child td { border-bottom: 0; }
+	.files { display: flex; gap: 8px; flex-wrap: wrap; }
+	.file { display: inline-flex; gap: 6px; align-items: center; background: var(--chip); padding: 4px 10px; border-radius: 8px; font-size: 12.5px; font-weight: 500; }
+	.lettersplit { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(280px, 1fr); flex: 1; min-height: 0; }
+	.lettertext { overflow: auto; padding: 18px 20px; border-left: 1px solid var(--line); background: var(--panel); }
+	.lettertext .txt { white-space: pre-wrap; font-size: 13.5px; line-height: 1.6; color: var(--ink-2); }
+
+	/* document viewer */
+	.viewer { display: flex; flex-direction: column; min-height: 0; flex: 1; background: var(--canvas); }
+	.viewer.boxed { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; height: 560px; flex: none; }
+	.vbar { display: flex; gap: 6px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: nowrap; }
+	.vbar .vname { flex: 1 1 auto; min-width: 0; }
+	.zlabel { min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; font-weight: 600; font-size: 12.5px; color: var(--ink-2); }
+	.vcanvas { flex: 1; overflow: auto; position: relative; min-height: 0; }
+	.vcanvas.pannable { cursor: grab; } .vcanvas.dragging { cursor: grabbing; user-select: none; }
+	.vpages { display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 24px; min-width: min-content; }
+	.vpages img { display: block; background: #fff; box-shadow: 0 4px 18px rgba(0, 0, 0, .18); border-radius: 2px; user-select: none; -webkit-user-drag: none; max-width: none; }
+	.vstate { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--muted); padding: 70px 20px; text-align: center; }
+	.vstate .i { width: 38px; height: 38px; stroke-width: 1.5; color: var(--faint); }
+	.vstate b { color: var(--ink-2); font-size: 15px; }
+	.spinner { width: 30px; height: 30px; border: 3px solid var(--line-2); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+	@keyframes spin { to { transform: rotate(360deg); } }
+
+	/* setup */
+	.boards { display: flex; flex-wrap: wrap; gap: 8px; }
+	.toggle { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line-2); border-radius: 20px; padding: 5px 13px 5px 9px; cursor: pointer; color: var(--ink-2); user-select: none; }
+	.toggle input { accent-color: var(--accent); margin: 0; }
+	.toggle:has(input:checked) { border-color: var(--accent); background: var(--accent-soft); color: var(--ink); }
 	.provider-fields { display: none; } .provider-fields.on { display: contents; }
-	.current { font-size: 15px; }
-	.links { margin-top: 10px; }
-	.links .link { display: flex; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); font-size: 13px; }
-	.links .link a { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); text-decoration: none; }
-	.pill.waiting { color: var(--muted); } .pill.applying { color: var(--accent); font-weight: 600; }
-	.x { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 6px; border-radius: 4px; }
-	.x:hover { background: var(--chip); color: var(--bad); }
+	.savebar { position: sticky; bottom: 12px; display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: var(--panel); border: 1px solid var(--line);
+		border-radius: var(--radius); box-shadow: var(--shadow-lg); }
+
+	/* toast */
+	.toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 100; background: var(--ink); color: var(--panel); padding: 11px 18px; border-radius: 11px;
+		display: none; max-width: 520px; box-shadow: var(--shadow-lg); font-weight: 500; animation: toastin .2s ease-out; }
+	@keyframes toastin { from { opacity: 0; transform: translate(-50%, 8px); } }
+
+	@media (max-width: 1100px) {
+		.app { grid-template-columns: 76px minmax(0, 1fr); }
+		aside.side { padding: 18px 10px; align-items: center; }
+		.brand .name, nav button .lbl, #sideversion, .side-foot .count > span:first-child { display: none; }
+		.side-foot .count b { font-size: 15px; }
+		.side-foot .ver { justify-content: center; }
+		.state { font-size: 0; padding: 5px; gap: 0; }
+		.brand { padding: 4px 0 18px; }
+		nav button { justify-content: center; padding: 11px; position: relative; }
+		nav .badge { position: absolute; top: 3px; right: 3px; min-width: 18px; line-height: 17px; padding: 0 4px; font-size: 10.5px; }
+		.side-foot { padding: 12px 0 0; align-items: center; } .side-foot .meter { width: 48px; }
+		.side-foot .count { flex-direction: column; align-items: center; }
+		main { padding: 20px 20px 50px; }
+		.cols { grid-template-columns: minmax(0, 1fr); }
+		.two { grid-template-columns: 1fr; }
+		.lettersplit { grid-template-columns: 1fr; grid-template-rows: minmax(360px, 1fr) auto; overflow: auto; }
+		.lettertext { border-left: 0; border-top: 1px solid var(--line); }
+		.dactions { max-width: none; }
+		.dhead { flex-wrap: wrap; }
+	}
 </style>
 </head>
 <body>
-<header>
-	<h1><img src="logo.png" alt=""><span>Job<b>ify</b></span></h1>
-	<nav>
-		<button data-tab="run" class="on">Run</button>
-		<button data-tab="questions">Questions <span id="qbadge" class="badge" hidden></span></button>
-		<button data-tab="history">History</button>
-		<button data-tab="setup">Setup</button>
-	</nav>
-	<div class="spacer"></div>
-	<button class="btn" id="updatebadge" hidden>Update</button>
-	<div class="count">Today <b id="today">0</b> / <span id="cap">20</span></div>
-	<span id="state" class="state">idle</span>
-</header>
-<main>
-	<div class="helpbar" id="helpbar" hidden>
-		<div><b>Jobify needs you</b> <span id="helpreason"></span><div class="hint" id="helphint"></div></div>
-		<button class="btn" id="helpdone">I did it, continue</button>
-	</div>
-	<section id="run" class="on">
-		<div class="card">
-			<div class="row">
-				<button class="btn" id="start">Start</button>
-				<button class="btn ghost" id="pause" disabled>Pause</button>
-				<button class="btn danger" id="stop" disabled>Stop</button>
-				<button class="btn ghost" id="takeover" disabled title="The agent stops after its current step so you can use the browser; Continue picks up where it was">Take over</button>
-				<div class="spacer"></div>
-				<span class="current" id="current"></span>
-			</div>
-			<div class="hint">It fills one job per tab and never presses Submit or Send. Filled tabs stay open in the Jobify browser; review each one and submit it yourself. Pause waits for the current job to finish; Stop cancels it.</div>
+<div class="app">
+	<aside class="side">
+		<div class="brand"><img src="logo.png" alt=""><span class="name">Job<b>ify</b></span></div>
+		<nav>
+			<button data-tab="run" class="on" title="Run"><svg class="i" viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg><span class="lbl">Run</span></button>
+			<button data-tab="questions" title="Questions"><svg class="i" viewBox="0 0 24 24"><path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 8.5 8.5 0 0 1-3.8-.9L3 21l1.9-5.7A8.5 8.5 0 1 1 21 11.5z"/></svg><span class="lbl">Questions</span><span id="qbadge" class="badge" hidden></span></button>
+			<button data-tab="history" title="History"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/></svg><span class="lbl">History</span></button>
+			<button data-tab="setup" title="Setup"><svg class="i" viewBox="0 0 24 24"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg><span class="lbl">Setup</span><span id="setupdot" class="badge" hidden>!</span></button>
+		</nav>
+		<div class="side-foot">
+			<button class="btn small" id="updatebadge" hidden>Update</button>
+			<div class="count"><span>Today</span><div><b id="today">0</b> <span>/</span> <span id="cap">20</span></div></div>
+			<div class="meter"><div id="todaybar"></div></div>
+			<div class="ver"><span id="sideversion">Jobify</span><span id="state" class="state">idle</span></div>
 		</div>
-		<div class="card">
-			<div class="row" style="justify-content: space-between"><h2 style="margin: 0">Job links</h2><span class="hint" id="linkcount" style="margin: 0"></span></div>
-			<div class="hint" style="margin: 2px 0 10px">Paste links to jobs you want (one per line, or a whole message with links in it). Jobify applies to them first, before searching the boards, and also picks up links you add while it runs.</div>
-			<textarea id="linkinput" placeholder="https://jobs.lever.co/acme/123&#10;https://boards.greenhouse.io/acme/jobs/456"></textarea>
-			<div class="row" style="margin-top: 8px">
-				<button class="btn" id="applylinks" title="Starts Jobify for these links only when it is not running; added to the running loop otherwise">Apply to these</button>
-				<button class="btn ghost" id="addlinks">Add to list</button>
-				<div class="spacer"></div>
-				<button class="btn ghost small" id="clearlinks" hidden>Clear finished</button>
-			</div>
-			<div class="links" id="links"></div>
+	</aside>
+	<main>
+		<div class="helpbar" id="helpbar" hidden>
+			<div class="ico">!</div>
+			<div style="flex:1"><b>Jobify needs you:</b> <span id="helpreason"></span><div class="hint" id="helphint"></div></div>
+			<button class="btn" id="helpdone">I did it, continue</button>
 		</div>
-		<div class="card">
-			<h2>Activity</h2>
-			<div class="log" id="log"><div class="empty">Nothing yet. Press Start.</div></div>
-		</div>
-	</section>
 
-	<section id="questions">
-		<div class="card">
-			<h2>Questions from applications</h2>
-			<div class="hint">The agent left these fields empty and kept going. Your answer is saved to your profile and used for every later application. When all questions of a job are answered (or closed with Done / Skip), Jobify goes back to that application and fills them in for you.</div>
-			<div id="qlist"></div>
-		</div>
-	</section>
+		<section id="run" class="tab on"><div class="page">
+			<div class="pagehead"><div><h1>Run</h1><p>Jobify fills one application per tab and stops before Submit. You review and submit.</p></div></div>
+			<div class="notice" id="laststop" hidden>
+				<div class="body"><div class="ttl" id="laststop_title">The loop stopped</div><div class="hint" id="laststop_text"></div></div>
+				<button class="x" id="laststop_close" title="Dismiss">&times;</button>
+			</div>
+			<div class="card onboard" id="onboard" hidden>
+				<div class="cardhead"><div><h2>Get set up</h2><div class="hint">A few steps before the first run. It takes about five minutes.</div></div><span class="progress-ring" id="onboard_count"></span></div>
+				<div class="steps" id="onboard_steps"></div>
+			</div>
+			<div class="card hero">
+				<div class="now" id="nowbox">
+					<div class="dot"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-1-1.5 1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.5-1 1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z"/></svg></div>
+					<div style="min-width:0"><div class="lbl" id="nowlabel">Ready</div><div class="current" id="current"></div></div>
+				</div>
+				<div class="controls">
+					<button class="btn big" id="start"><svg class="i" viewBox="0 0 24 24"><polygon points="6 4 20 12 6 20 6 4"/></svg><span id="startlabel">Start</span></button>
+					<button class="btn ghost" id="pause" disabled><svg class="i" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg><span id="pauselabel">Pause</span></button>
+					<button class="btn ghost" id="takeover" disabled title="The agent stops after its current step so you can use the browser; Continue picks up where it was"><svg class="i" viewBox="0 0 24 24"><path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/></svg>Take over</button>
+					<button class="btn danger" id="stop" disabled><svg class="i" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>Stop</button>
+				</div>
+				<p class="hint">Pause finishes the current job, then waits. Stop cancels it. Filled tabs stay open in the Jobify browser for you to review and submit.</p>
+			</div>
+			<div class="stats">
+				<button class="stat" data-goto-filter="ready"><div class="n" id="stat_ready">0</div><div class="t">Ready to submit</div></button>
+				<button class="stat need" data-goto-filter="need"><div class="n" id="stat_need">0</div><div class="t">Need you</div></button>
+				<button class="stat subm" data-goto-filter="submitted"><div class="n" id="stat_submitted">0</div><div class="t">Submitted</div></button>
+				<button class="stat other" data-goto-filter="other"><div class="n" id="stat_other">0</div><div class="t">Skipped or failed</div></button>
+			</div>
+			<div class="cols">
+				<div class="card">
+					<div class="cardhead"><h2>Job links</h2><span class="hint" id="linkcount"></span></div>
+					<p class="sub">Paste links to jobs you want: one per line, or a whole message with links in it. They go first, before the board search, also while it runs.</p>
+					<textarea id="linkinput" placeholder="https://jobs.lever.co/acme/123&#10;https://boards.greenhouse.io/acme/jobs/456"></textarea>
+					<div class="row" style="margin-top: 10px">
+						<button class="btn" id="applylinks" title="Starts Jobify for these links only when it is not running; added to the running loop otherwise">Apply to these</button>
+						<button class="btn ghost" id="addlinks">Add to list</button>
+						<div class="spacer"></div>
+						<button class="btn ghost small" id="clearlinks" hidden>Clear finished</button>
+					</div>
+					<div class="links" id="links"></div>
+				</div>
+				<div class="card">
+					<div class="cardhead"><h2>Activity</h2><button class="btn ghost small" id="clearlog">Clear</button></div>
+					<div class="log" id="log"><div class="empty">Nothing yet. Press Start.</div></div>
+				</div>
+			</div>
+		</div></section>
 
-	<section id="history">
-		<div class="card">
-			<div class="row"><h2 style="margin:0">Applications</h2><span class="hint" id="rowsummary"></span><div class="spacer"></div>
-				<button class="btn ghost" id="opencsv">Open CSV</button><button class="btn ghost" id="openhome">Open data folder</button></div>
+		<section id="questions" class="tab"><div class="page">
+			<div class="pagehead"><div><h1>Questions</h1><p>Fields the agent left empty and kept going. Answer once: it's saved to your profile and used for every later application.</p></div></div>
+			<div class="card">
+				<div class="hint">When every question of a job is answered (or closed with Done / Skip), Jobify goes back to that application and fills the answers in for you.</div>
+				<div id="qlist"></div>
+			</div>
+		</div></section>
+
+		<section id="history" class="tab"><div class="page">
+			<div class="pagehead">
+				<div><h1>History</h1><p>Every job Jobify worked on. Click one to see its resume, cover letter and exactly what was filled in.</p></div>
+				<div class="row"><button class="btn ghost" id="opencsv">Open CSV</button><button class="btn ghost" id="openhome">Open data folder</button></div>
+			</div>
+			<div class="hint" id="rowsummary"></div>
 			<div class="why" id="whybox"></div>
-			<div style="max-height: 620px; overflow: auto; margin-top: 10px">
-				<table><thead><tr><th>When</th><th>Company / role</th><th>Status</th><th>Files</th><th>Notes</th></tr></thead><tbody id="rows"></tbody></table>
+			<div class="toolbar">
+				<div class="search"><svg class="i" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg><input type="search" id="hsearch" placeholder="Search company, role, notes"></div>
+				<div class="chips" id="hfilters"></div>
 			</div>
-		</div>
-	</section>
+			<div class="jobs" id="rows"></div>
+		</div></section>
 
-	<section id="setup">
-		<div class="card">
-			<h2>Your files</h2>
-			<div class="grid">
-				<label>Profile (.md)</label>
-				<div class="row"><span class="path" id="profile_path">not set</span><button class="btn ghost" data-pick="profile">Choose</button><button class="btn ghost" data-starter="profile">New from template</button></div>
-				<label>Profile completeness</label>
-				<div><div class="meter"><div id="scorebar"></div></div><div class="hint" id="scoretext">Choose a profile to see what it is missing.</div></div>
-				<label>Job criteria (.md)</label>
-				<div class="row"><span class="path" id="criteria_path">not set</span><button class="btn ghost" data-pick="criteria">Choose</button><button class="btn ghost" data-starter="criteria">New from template</button></div>
-				<label>Resume template</label>
-				<div class="row"><span class="path" id="resume_template_path">built-in</span><button class="btn ghost" data-pick="template">Choose</button><button class="btn ghost" data-starter="template">Copy built-in to edit</button><button class="btn ghost" id="builtin">Use built-in</button></div>
-				<label>Cover letter tone</label>
-				<input type="text" id="cover_letter_tone" placeholder="e.g. formal, friendly, short (150 words)">
-			</div>
-			<div class="hint">The profile holds everything about you (contact details, experience, education, skills, standard answers). The criteria say which jobs you want. A "Cover letter tone:" line in the criteria overrides the tone here. Templates use {{name}}, {{#experience}}...{{/experience}} and so on (see the built-in one).</div>
-		</div>
-		<div class="card">
-			<h2>Logins</h2>
-			<div class="row"><button class="btn" id="loginbrowser">Log in to sites</button>
-				<span class="hint">Opens the Jobify browser normally (Google, LinkedIn, Indeed). Sign in, close that window, then press Start. Google blocks sign-in while the browser is remote-controlled, so log in here, not during a run.</span></div>
-		</div>
-		<div class="card">
-			<h2>AI model</h2>
-			<div class="grid">
-				<label>Provider</label>
-				<select id="provider"><option value="gemini">Google Gemini (API key)</option><option value="openai">OpenAI (API key)</option><option value="chatgpt">Sign in with ChatGPT</option></select>
-				<label>Backup model</label>
-				<div><select id="backup_provider"><option value="">None</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option><option value="chatgpt">ChatGPT (signed in)</option></select>
-				<div class="hint">Used for a job when the main model stays busy (e.g. Google's "high demand" errors). Set up its key or sign-in below too.</div></div>
-				<div class="provider-fields" data-provider="gemini">
-					<label>Gemini model</label><input type="text" id="gemini_model">
-					<label>Gemini API key</label><input type="password" id="gemini_api_key" placeholder="saved: leave empty to keep">
+		<section id="setup" class="tab"><div class="page">
+			<div class="pagehead"><div><h1>Setup</h1><p>Your files, the AI model, and which jobs to look for.</p></div></div>
+			<div class="card" id="card_files">
+				<h2>Your files</h2>
+				<p class="sub">The profile holds everything about you (contact, experience, education, skills, standard answers). The criteria say which jobs you want.</p>
+				<div class="grid">
+					<label>Profile (.md)</label>
+					<div class="row"><span class="path" id="profile_path">not set</span><button class="btn ghost small" data-pick="profile">Choose</button><button class="btn ghost small" data-starter="profile">New from template</button></div>
+					<label>Profile completeness</label>
+					<div><div class="meter"><div id="scorebar"></div></div><div class="hint" id="scoretext" style="margin-top:5px">Choose a profile to see what it is missing.</div></div>
+					<label>Job criteria (.md)</label>
+					<div class="row"><span class="path" id="criteria_path">not set</span><button class="btn ghost small" data-pick="criteria">Choose</button><button class="btn ghost small" data-starter="criteria">New from template</button></div>
+					<label>Resume template</label>
+					<div class="row"><span class="path" id="resume_template_path">built-in</span><button class="btn ghost small" data-pick="template">Choose</button><button class="btn ghost small" data-starter="template">Copy built-in to edit</button><button class="btn ghost small" id="builtin">Use built-in</button></div>
+					<label>Cover letter tone</label>
+					<input type="text" id="cover_letter_tone" placeholder="e.g. formal, friendly, short (150 words)">
 				</div>
-				<div class="provider-fields" data-provider="openai">
-					<label>OpenAI model</label><input type="text" id="openai_model">
-					<label>OpenAI API key</label><input type="password" id="openai_api_key" placeholder="saved: leave empty to keep">
-				</div>
-				<div class="provider-fields" data-provider="chatgpt">
-					<label>ChatGPT account</label>
-					<div class="row"><span id="chatgpt_status">not signed in</span><button class="btn" id="chatgpt_login">Sign in with ChatGPT</button><button class="btn ghost" id="chatgpt_logout">Sign out</button></div>
-					<label>Model</label><input type="text" id="cg_model">
-					<label></label><div class="hint">Uses your ChatGPT plan (Plus or Pro) instead of an API key. Click Sign in, approve "Use your ChatGPT plan" in the browser, and come back. No Client ID or setup needed.</div>
+				<div class="hint" style="margin-top:10px">A "Cover letter tone:" line in the criteria overrides the tone here. Templates use {{name}}, {{#experience}}...{{/experience}} and so on (see the built-in one).</div>
+			</div>
+			<div class="card" id="card_logins">
+				<h2>Logins</h2>
+				<div class="row"><button class="btn" id="loginbrowser">Log in to sites</button>
+					<span class="hint" style="flex:1; min-width: 260px">Opens the Jobify browser normally (Google, LinkedIn, Indeed). Sign in, close that window, then press Start. Google blocks sign-in while the browser is remote-controlled, so log in here, not during a run.</span></div>
+			</div>
+			<div class="card" id="card_model">
+				<h2>AI model</h2>
+				<p class="sub">Writes your tailored resume and cover letter and drives the browser.</p>
+				<div class="grid">
+					<label>Provider</label>
+					<div class="row" style="flex-wrap:nowrap"><select id="provider" style="flex:1"><option value="gemini">Google Gemini (API key)</option><option value="openai">OpenAI (API key)</option><option value="chatgpt">Sign in with ChatGPT</option></select>
+						<button class="btn ghost" id="testmodel" title="Save, then send the model one short message to check the key or sign-in">Test</button></div>
+					<label></label><span class="hint" id="modelstatus">Save your key, then Test to check it works.</span>
+					<div class="provider-fields" data-provider="gemini">
+						<label>Gemini model</label><input type="text" id="gemini_model">
+						<label>Gemini API key</label><input type="password" id="gemini_api_key" placeholder="saved: leave empty to keep">
+					</div>
+					<div class="provider-fields" data-provider="openai">
+						<label>OpenAI model</label><input type="text" id="openai_model">
+						<label>OpenAI API key</label><input type="password" id="openai_api_key" placeholder="saved: leave empty to keep">
+					</div>
+					<div class="provider-fields" data-provider="chatgpt">
+						<label>ChatGPT account</label>
+						<div class="row"><span id="chatgpt_status">not signed in</span><button class="btn small" id="chatgpt_login">Sign in with ChatGPT</button><button class="btn ghost small" id="chatgpt_logout">Sign out</button></div>
+						<label>Model</label><input type="text" id="cg_model">
+						<label></label><div class="hint">Uses your ChatGPT plan (Plus or Pro) instead of an API key. Click Sign in, approve "Use your ChatGPT plan" in the browser, and come back.</div>
+					</div>
+					<label>Backup model</label>
+					<div><select id="backup_provider"><option value="">None</option><option value="gemini">Google Gemini</option><option value="openai">OpenAI</option><option value="chatgpt">ChatGPT (signed in)</option></select>
+					<div class="hint" style="margin-top:4px">Used for a job when the main model stays busy (e.g. Google's "high demand" errors). Set up its key or sign-in too.</div></div>
 				</div>
 			</div>
-		</div>
-		<div class="card">
-			<h2>Jobs</h2>
-			<div class="grid">
-				<label>Boards to search</label><div class="boards" id="boards"></div>
-				<label>Jobs per day</label><input type="number" id="daily_cap" min="1" max="200">
-				<label>Pause for review at</label><div class="row"><input type="number" id="max_review_tabs" min="1" max="100" style="width:90px"><span class="hint">filled tabs waiting for you (keeps the PC fast and nothing forgotten)</span></div>
-				<label>Skip jobs older than</label><div class="row"><input type="number" id="max_job_age_days" min="1" max="365" style="width:90px"><span class="hint">days (fresh postings get far more replies; newest are applied to first)</span></div>
-				<label>Browser (optional)</label>
-				<div class="row"><span class="path" id="browser_executable">Chrome or Edge (automatic)</span><button class="btn ghost" data-pick="browser">Choose</button><button class="btn ghost" id="autobrowser">Automatic</button></div>
+			<div class="card" id="card_jobs">
+				<h2>Jobs</h2>
+				<div class="grid">
+					<label>Boards to search</label><div class="boards" id="boards"></div>
+					<label>Jobs per day</label><input type="number" id="daily_cap" min="1" max="200" style="width:110px">
+					<label>Pause for review at</label><div class="row"><input type="number" id="max_review_tabs" min="1" max="100" style="width:110px"><span class="hint">filled tabs waiting for you (keeps the PC fast and nothing forgotten)</span></div>
+					<label>Keep searching</label><div class="row"><label class="toggle"><input type="checkbox" id="keep_searching"> When the boards have nothing new, search again</label><span class="hint">every</span><input type="number" id="search_again_minutes" min="5" max="720" style="width:90px"><span class="hint">minutes, instead of stopping</span></div>
+					<label>Skip jobs older than</label><div class="row"><input type="number" id="max_job_age_days" min="1" max="365" style="width:110px"><span class="hint">days (fresh postings get far more replies; newest go first)</span></div>
+					<label>Browser (optional)</label>
+					<div class="row"><span class="path" id="browser_executable">Chrome or Edge (automatic)</span><button class="btn ghost small" data-pick="browser">Choose</button><button class="btn ghost small" id="autobrowser">Automatic</button></div>
+				</div>
 			</div>
+			<div class="card" id="card_updates">
+				<h2>Updates</h2>
+				<div class="row"><span id="version">Jobify</span><button class="btn ghost small" id="checkupdate">Check for updates</button>
+					<button class="btn small" id="installupdate" hidden>Install update</button><span class="hint" id="updatestatus"></span></div>
+				<div class="hint" style="margin-top:8px">The app checks when it starts. Installing closes Jobify (and its browser), updates it, and opens the new version. Your settings, profile and history are kept.</div>
+			</div>
+			<div class="savebar"><button class="btn" id="save">Save settings</button><span class="hint" id="home" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span></div>
+		</div></section>
+	</main>
+</div>
+
+<div class="detail" id="detail" hidden>
+	<div class="backdrop" id="d_backdrop"></div>
+	<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="d_company">
+		<div class="dhead">
+			<div class="avatar" id="d_avatar">?</div>
+			<div class="dtitle"><h2 id="d_company"></h2><div class="tt" id="d_title"></div><div class="dmeta" id="d_meta"></div></div>
+			<div class="dactions" id="d_actions"></div>
+			<button class="x" id="d_close" title="Close (Esc)" style="font-size:24px">&times;</button>
 		</div>
-		<div class="card">
-			<h2>Updates</h2>
-			<div class="row"><span id="version">Jobify</span><button class="btn ghost" id="checkupdate">Check for updates</button>
-				<button class="btn" id="installupdate" hidden>Install update</button><span class="hint" id="updatestatus"></span></div>
-			<div class="hint">The app checks when it starts. Installing closes Jobify (and its browser), updates it, and opens the new version. Your settings, profile and history are kept.</div>
+		<div class="dtabs" id="dtabs">
+			<button data-dtab="summary" class="on">Summary</button>
+			<button data-dtab="resume">Resume</button>
+			<button data-dtab="letter">Cover letter</button>
+			<button data-dtab="submitted">What we submitted</button>
 		</div>
-		<div class="row"><button class="btn" id="save">Save settings</button><span class="hint" id="home"></span></div>
-	</section>
-</main>
+		<div class="dbody">
+			<div class="dpane on" id="dp_summary"></div>
+			<div class="dpane full" id="dp_resume"><div class="viewer" id="v_resume"></div></div>
+			<div class="dpane full" id="dp_letter"><div class="lettersplit"><div class="viewer" id="v_letter"></div><div class="lettertext" id="d_lettertext"></div></div></div>
+			<div class="dpane" id="dp_submitted"><div id="d_submitted"></div><div class="viewer boxed" id="v_shot"></div></div>
+		</div>
+	</div>
+</div>
 <div class="toast" id="toast"></div>
 <script>
 const $ = id => document.getElementById(id);
 let api = null, since = 0, state = null;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const ICONS = {
+	zoomin: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/>',
+	zoomout: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/>',
+	fit: '<polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/>',
+	external: '<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/>',
+	folder: '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>',
+	check: '<polyline points="20 6 9 17 4 12"/>',
+	file: '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/>',
+	image: '<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/>',
+	copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+	tab: '<rect x="2" y="4" width="20" height="16" rx="2"/><line x1="2" y1="9" x2="22" y2="9"/>',
+	refresh: '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>',
+	info: '<circle cx="12" cy="12" r="9"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>',
+	list: '<line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/>',
+	clock: '<circle cx="12" cy="12" r="9"/><polyline points="12 7 12 12 15 14"/>',
+	search: '<circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>',
+};
+const I = name => `<svg class="i" viewBox="0 0 24 24">${ICONS[name] || ''}</svg>`;
+const STATUS_LABEL = {filled: 'Ready to submit', email_drafted: 'Email drafted', needs_input: 'Needs you', submitted: 'Submitted', skipped: 'Skipped', failed: 'Failed'};
+const statusText = s => STATUS_LABEL[s] || String(s || '').replace('_', ' ');
+const AVATAR_COLORS = ['#e5602a', '#2563eb', '#7c3aed', '#0d9488', '#db2777', '#ca8a04', '#4f46e5', '#059669', '#dc2626', '#0284c7'];
+function avatar(name) {
+	const n = String(name || '?').trim();
+	let h = 0; for (const c of n) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+	return {letter: esc((n[0] || '?').toUpperCase()), color: AVATAR_COLORS[h % AVATAR_COLORS.length]};
+}
+const dirname = p => String(p || '').replace(/[\\/][^\\/]*$/, '');
+const basename = p => String(p || '').split(/[\\/]/).pop();
 
 function toast(text, ms = 3500) {
 	const t = $('toast'); t.textContent = text; t.style.display = 'block';
@@ -234,10 +557,12 @@ async function call(name, ...args) {
 	return r;
 }
 
-document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
-	document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x === b));
-	document.querySelectorAll('section').forEach(s => s.classList.toggle('on', s.id === b.dataset.tab));
-});
+function showTab(name) {
+	document.querySelectorAll('nav button').forEach(x => x.classList.toggle('on', x.dataset.tab === name));
+	document.querySelectorAll('section.tab').forEach(s => s.classList.toggle('on', s.id === name));
+	window.scrollTo(0, 0);
+}
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
 
 function showProvider() {
 	const p = $('provider').value;
@@ -251,20 +576,23 @@ function fillSetup(st) {
 	$('criteria_path').textContent = s.criteria_path || 'not set';
 	$('resume_template_path').textContent = s.resume_template_path || 'built-in';
 	$('browser_executable').textContent = s.browser_executable || 'Chrome or Edge (automatic)';
-	for (const k of ['cover_letter_tone', 'gemini_model', 'openai_model', 'daily_cap', 'provider', 'backup_provider', 'max_review_tabs', 'max_job_age_days']) $(k).value = s[k];
+	for (const k of ['cover_letter_tone', 'gemini_model', 'openai_model', 'daily_cap', 'provider', 'backup_provider', 'max_review_tabs', 'max_job_age_days']) $(k).value = s[k] ?? '';
 	const ps = st.profile_score;
 	$('scorebar').style.width = (ps ? ps.score : 0) + '%';
 	$('scorebar').style.background = ps && ps.score >= 80 ? 'var(--ok)' : 'var(--warn)';
 	$('scoretext').textContent = !ps ? 'Choose a profile to see what it is missing.'
 		: ps.missing.length ? `${ps.score}% complete. Missing (forms ask these, so they become questions): ${ps.missing.join(', ')}.`
 		: '100% complete: forms rarely need to ask you anything.';
+	$('keep_searching').checked = s.keep_searching ?? true;
+	$('search_again_minutes').value = s.search_again_minutes ?? 30;
 	$('gemini_api_key').placeholder = s.gemini_api_key ? 'saved (leave empty to keep)' : 'not set';
 	$('openai_api_key').placeholder = s.openai_api_key ? 'saved (leave empty to keep)' : 'not set';
-	$('cg_model').value = s.chatgpt.model;
-	$('boards').innerHTML = Object.entries(st.boards).map(([id, label]) =>
-		`<label><input type="checkbox" value="${id}" ${s.boards.includes(id) ? 'checked' : ''}> ${esc(label)}</label>`).join('');
+	$('cg_model').value = (s.chatgpt || {}).model || '';
+	$('boards').innerHTML = Object.entries(st.boards || {}).map(([id, label]) =>
+		`<label class="toggle"><input type="checkbox" value="${esc(id)}" ${(s.boards || []).includes(id) ? 'checked' : ''}> ${esc(label)}</label>`).join('') || '<span class="hint">No boards available.</span>';
 	$('home').textContent = 'Data folder: ' + st.home;
 	$('version').textContent = 'Jobify ' + st.version;
+	$('sideversion').textContent = 'v' + st.version;
 	showProvider();
 }
 
@@ -277,6 +605,8 @@ function setupData() {
 		chatgpt: cg, daily_cap: $('daily_cap').value,
 		max_review_tabs: Number($('max_review_tabs').value), max_job_age_days: Number($('max_job_age_days').value),
 		boards: [...document.querySelectorAll('#boards input:checked')].map(i => i.value),
+		keep_searching: $('keep_searching').checked,
+		search_again_minutes: Math.min(720, Math.max(5, Number($('search_again_minutes').value) || 30)),
 	};
 }
 
@@ -296,7 +626,26 @@ $('chatgpt_login').onclick = async () => {
 	toast('Finish signing in in your web browser...', 8000);
 	const r = await call('chatgpt_login'); toast('Signed in' + (r.email ? ' as ' + r.email : '') + '.'); refresh(true);
 };
-$('loginbrowser').onclick = async () => { await call('open_login_browser'); toast('Sign in, then close that browser window and press Start.', 8000); };
+async function testModel() {
+	const st = $('modelstatus');
+	st.style.color = ''; st.textContent = 'Testing…';
+	$('testmodel').disabled = true;
+	try {
+		await call('save_settings', setupData());
+		$('gemini_api_key').value = $('openai_api_key').value = '';
+		let r;
+		try { r = await api.test_model(''); } catch (err) { r = {error: String(err)}; }
+		if (r && r.ok) { st.style.color = 'var(--ok)'; st.textContent = `✓ Works (${r.model || 'model'})`; }
+		else { st.style.color = 'var(--bad)'; st.textContent = (r && r.error) || 'The model did not answer.'; }
+		refresh(true);
+		return r;
+	} catch (err) {
+		st.style.color = 'var(--bad)'; st.textContent = err.message || String(err);
+	} finally { $('testmodel').disabled = false; }
+}
+$('testmodel').onclick = testModel;
+async function openLogins() { await call('open_login_browser'); toast('Sign in, then close that browser window and press Start.', 8000); }
+$('loginbrowser').onclick = openLogins;
 function showUpdate(version) {
 	$('updatebadge').hidden = $('installupdate').hidden = false;
 	$('updatebadge').textContent = 'Update to ' + version;
@@ -322,16 +671,25 @@ $('start').onclick = async () => {
 	if (state && (state.runner === 'paused' || state.runner === 'held')) return call('resume');
 	await call('save_settings', setupData()).catch(() => {});
 	await call('start'); toast('Starting the browser...');
+	refresh(false);
 };
 $('pause').onclick = () => call(state && state.runner === 'paused' ? 'resume' : 'pause');
 $('takeover').onclick = async () => { await call('take_over'); toast('The agent stops after its current step. The browser is yours; click Continue when done.', 6000); };
 $('helpdone').onclick = async () => { await call('help_done'); showHelp(null); };
+$('stop').onclick = () => call('stop');
+$('opencsv').onclick = () => call('open_csv');
+$('openhome').onclick = () => call('open_path', '');
+$('clearlog').onclick = () => { $('log').innerHTML = '<div class="empty">Cleared.</div>'; };
 
 let helpTimer = null;
 function showHelp(help) {
 	const bar = $('helpbar');
 	if (!help) { bar.hidden = true; clearInterval(helpTimer); helpTimer = null; return; }
 	$('helpreason').textContent = help.reason + (help.company ? ` (${help.company})` : '');
+	const hold = help.need === 'errors' || help.need === 'review';
+	$('helpdone').textContent = hold ? 'Continue' : 'I did it, continue';
+	if (hold) $('helphint').textContent = help.need === 'review' ? 'Review and submit some tabs (or close them), then click Continue.'
+		: 'Jobify paused after several errors in a row. Fix what the message says if you can, then click Continue.';
 	bar.hidden = false;
 }
 
@@ -353,14 +711,15 @@ function startHelp(e) {
 	if (e.sound) beep();
 	let left = e.wait_s || 60;
 	clearInterval(helpTimer);
-	const tick = () => { $('helphint').textContent = left > 0 ? `In the browser tab, then click the button. If you are away, Jobify parks this job in ${left}s and goes on.` : 'Parked in Questions; the loop goes on.'; left--; };
+	if (e.need === 'errors' || e.need === 'review' || !e.wait_s) { helpTimer = null; return; }  // a hold: no countdown
+	const tick = () => {
+		$('helphint').textContent = left > 0 ? `Do it in the browser tab, then click the button. If you are away, Jobify parks this job in ${left}s and goes on.` : 'Parked in Questions; the loop goes on.';
+		left--;
+	};
 	tick(); helpTimer = setInterval(tick, 1000);
 }
 
-$('stop').onclick = () => call('stop');
-$('opencsv').onclick = () => call('open_csv');
-$('openhome').onclick = () => call('open_path', '');
-
+/* Questions */
 let shownQuestions = null;
 function renderQuestions(qs) {
 	$('qbadge').hidden = !qs.length; $('qbadge').textContent = qs.length;
@@ -374,12 +733,13 @@ function renderQuestions(qs) {
 	const focused = document.activeElement && document.activeElement.id;
 	$('qlist').innerHTML = qs.length ? qs.map(q => {
 		const login = q.field_hint === 'login' || q.field_hint === 'help';
-		const meta = `${esc([q.company, q.title].filter(Boolean).join(' - '))}${q.jobs > 1 ? ` (asked by ${q.jobs} jobs)` : ''} ${esc(q.asked_at)}`;
+		const where = [q.company, q.title].filter(Boolean).join(' - ');
+		const meta = `${where ? `<span class="co">${esc(where)}</span>` : ''}${q.jobs > 1 ? `<span>asked by ${q.jobs} jobs</span>` : ''}<span>${esc(q.asked_at)}</span>`;
 		const act = login
-			? `<span class="hint" style="flex:1">Do it in that job's tab in the Jobify browser (log in, solve the check, or finish it), then click Done.</span><button class="btn" data-done="${q.id}">Done</button>`
-			: `<input type="text" id="a_${q.id}" placeholder="Your answer" style="flex:1"><button class="btn" data-answer="${q.id}">Save answer</button><button class="btn ghost" data-done="${q.id}" title="Remove without saving an answer">Skip</button>`;
-		return `<div class="q"><div><b>${esc(q.question)}</b></div><div class="meta">${meta}</div><div class="row">${act}</div></div>`;
-	}).join('') : '<div class="empty">No open questions.</div>';
+			? `<span class="hint" style="flex:1">Do it in that job's tab in the Jobify browser (log in, solve the check, or finish it), then click Done.</span><button class="btn" data-done="${esc(q.id)}">${I('check')} Done</button>`
+			: `<input type="text" id="a_${esc(q.id)}" placeholder="Your answer" style="flex:1; min-width: 220px"><button class="btn" data-answer="${esc(q.id)}">Save answer</button><button class="btn ghost" data-done="${esc(q.id)}" title="Remove without saving an answer">Skip</button>`;
+		return `<div class="q${login ? ' login' : ''}"><div class="qt">${esc(q.question)}</div><div class="meta">${meta}</div><div class="row">${act}</div></div>`;
+	}).join('') : `<div class="vstate">${I('check')}<b>You're all caught up</b><span>No open questions. New ones show up here while Jobify runs.</span></div>`;
 	for (const [id, value] of Object.entries(typed)) if ($(id)) $(id).value = value;
 	if (focused && $(focused)) $(focused).focus();
 	document.querySelectorAll('[data-answer]').forEach(b => b.onclick = async () => {
@@ -391,19 +751,27 @@ function renderQuestions(qs) {
 		const input = $('a_' + b.dataset.answer);
 		if (input) input.onkeydown = e => { if (e.key === 'Enter') b.click(); };
 	});
-	document.querySelectorAll('[data-done]').forEach(b => b.onclick = async () => {
+	document.querySelectorAll('#qlist [data-done]').forEach(b => b.onclick = async () => {
 		const r = await call('dismiss', b.dataset.done);
 		if (r.finishing && r.finishing.length) toast(`Going back to fill ${r.finishing.length} application(s).`);
 		refresh(false);
 	});
 }
 
-function renderSummary(rows) {
+/* History */
+function latestRows(rows) {
 	const latest = {};
 	for (const r of rows) if (!latest[r.url]) latest[r.url] = r;  // rows come newest first
-	const all = Object.values(latest), n = (...st) => all.filter(r => st.includes(r.status)).length;
+	return Object.values(latest);
+}
+function renderSummary(rows) {
+	const all = latestRows(rows), n = (...st) => all.filter(r => st.includes(r.status)).length;
 	const parts = [`${n('filled', 'email_drafted')} ready to submit`, `${n('needs_input')} need you`, `${n('submitted')} submitted`, `${n('skipped')} skipped`, `${n('failed')} failed`];
-	$('rowsummary').textContent = all.length ? ' · ' + parts.join(' · ') : '';
+	$('rowsummary').textContent = all.length ? parts.join(' · ') : '';
+	$('stat_ready').textContent = n('filled', 'email_drafted');
+	$('stat_need').textContent = n('needs_input');
+	$('stat_submitted').textContent = n('submitted');
+	$('stat_other').textContent = n('skipped', 'failed');
 	const waiting = all.filter(r => r.status === 'needs_input');
 	const why = { 'a question for you': 0, 'a login or bot check': 0, 'stuck on the page': 0, 'paused by you': 0 };
 	for (const r of waiting) {
@@ -419,50 +787,377 @@ function renderSummary(rows) {
 	$('whybox').textContent = reasons.length ? 'Not finished: ' + reasons.join(', ') + '.' : '';
 }
 
+const FILTERS = [
+	['all', 'All', () => true],
+	['ready', 'Ready', r => ['filled', 'email_drafted'].includes(r.status)],
+	['need', 'Needs you', r => r.status === 'needs_input'],
+	['submitted', 'Submitted', r => r.status === 'submitted'],
+	['skipped', 'Skipped', r => r.status === 'skipped'],
+	['failed', 'Failed', r => r.status === 'failed'],
+	['other', 'Skipped or failed', r => ['skipped', 'failed'].includes(r.status), true],
+];
+let hfilter = 'all', hsearch = '', shownRows = null;
+function rowActions(r, big) {
+	const open = ['needs_input', 'filled', 'email_drafted', 'failed'].includes(r.status);
+	const cls = big ? 'btn ghost small' : 'lnk';
+	return [
+		r.tab_id && r.status !== 'submitted' ? `<button class="${cls}" data-tab-id="${esc(r.tab_id.split(' ').pop())}" title="Bring this job's tab to the front in the Jobify browser">${big ? I('tab') + ' ' : ''}Show tab</button>` : '',
+		open ? `<button class="${cls}" data-refill="${esc(r.url)}" title="Go back to this application and fill what your answers now cover">${big ? I('refresh') + ' ' : ''}Fill again</button>` : '',
+		big ? `<button class="${cls}" data-url="${esc(r.url)}" title="Open the posting in your web browser">${I('external')} Posting</button>` : '',
+		open ? `<button class="btn ${big ? 'ok' : 'ghost'} small" data-submitted="${esc(r.url)}" title="You submitted it: never apply to it again">Submitted ✓</button>` : '',
+	].filter(Boolean).join('');
+}
 function renderRows(rows) {
 	renderSummary(rows);
-	$('rows').innerHTML = rows.length ? rows.map(r => {
-		const open = ['needs_input', 'filled', 'email_drafted', 'failed'].includes(r.status);
-		const actions = [
-			r.tab_id && r.status !== 'submitted' ? `<a data-tab-id="${esc(r.tab_id.split(' ').pop())}">show tab</a>` : '',
-			open ? `<a data-refill="${esc(r.url)}" title="Go back to this application and fill what your answers now cover">fill again</a>` : '',
-			open ? `<button class="btn ghost small" data-submitted="${esc(r.url)}" title="You submitted it: never apply to it again">Submitted ✓</button>` : '',
-		].filter(Boolean).join(' · ');
-		return `<tr>
-		<td>${esc(r.date)}<br><span class="hint">${esc(r.time)}</span></td>
-		<td><b>${esc(r.company || '-')}</b><br>${esc(r.title)}<br><a data-url="${esc(r.url)}">posting</a>${actions ? ' · ' + actions : ''}</td>
-		<td><span class="pill ${esc(r.status)}">${esc(r.status.replace('_', ' '))}</span></td>
-		<td>${r.resume ? `<a data-open="${esc(r.resume)}">resume</a>` : ''}${r.cover_letter ? `<br><a data-open="${esc(r.cover_letter)}">cover letter</a>` : ''}${r.screenshot ? `<br><a data-open="${esc(r.screenshot)}">screenshot</a>` : ''}</td>
-		<td>${esc(r.notes)}${r.check ? `<div class="${r.check.startsWith('All required') ? 'checkok' : 'checkwarn'}">${r.check.startsWith('All required') ? '✓ ' : '⚠ '}${esc(r.check)}</div>` : ''}${r.unanswered_questions ? `<div class="hint">Waiting on: ${esc(r.unanswered_questions)}</div>` : ''}</td></tr>`;
-	}).join('') : '<tr><td colspan="5" class="empty">No applications yet.</td></tr>';
-	document.querySelectorAll('[data-open]').forEach(a => a.onclick = () => call('open_path', a.dataset.open));
-	document.querySelectorAll('[data-url]').forEach(a => a.onclick = () => call('open_path', a.dataset.url));
-	document.querySelectorAll('[data-tab-id]').forEach(a => a.onclick = () => call('focus_tab', a.dataset.tabId));
-	document.querySelectorAll('[data-refill]').forEach(a => a.onclick = async () => {
-		await call('refill', a.dataset.refill); toast('Going back to that application to fill it.');
+	const all = latestRows(rows);
+	$('hfilters').innerHTML = FILTERS.filter(f => !f[3]).map(([id, label, fn]) =>
+		`<button class="chip${hfilter === id ? ' on' : ''}" data-filter="${id}">${label}<span class="c">${all.filter(fn).length}</span></button>`).join('');
+	const key = JSON.stringify([rows, hfilter, hsearch]);
+	if (key === shownRows) return;
+	shownRows = key;
+	const fn = (FILTERS.find(f => f[0] === hfilter) || FILTERS[0])[2];
+	const q = hsearch.trim().toLowerCase();
+	const shown = rows.filter(fn).filter(r => !q || [r.company, r.title, r.url, r.notes, r.board].join(' ').toLowerCase().includes(q));
+	if (!rows.length) {
+		$('rows').innerHTML = `<div class="card vstate">${I('clock')}<b>No applications yet</b><span>Press Start on the Run page, or paste job links there. Every job shows up here with its resume and what was filled in.</span></div>`;
+		return;
+	}
+	$('rows').innerHTML = shown.length ? shown.map(r => {
+		const a = avatar(r.company || r.title);
+		const badges = [
+			r.resume ? `<span class="tag">${I('file')}Resume</span>` : '',
+			r.cover_letter ? `<span class="tag">${I('file')}Cover letter</span>` : '',
+			r.screenshot ? `<span class="tag">${I('image')}Screenshot</span>` : '',
+		].join('');
+		const check = r.check ? `<div class="${r.check.startsWith('All required') ? 'checkok' : 'checkwarn'}">${r.check.startsWith('All required') ? '✓ ' : '⚠ '}${esc(r.check)}</div>` : '';
+		const note = r.notes ? `<div class="note">${esc(r.notes)}</div>` : '';
+		const wait = r.unanswered_questions ? `<div class="note" style="color:var(--warn)">Waiting on: ${esc(r.unanswered_questions)}</div>` : '';
+		return `<div class="job" data-job="${esc(r.url)}" tabindex="0">
+			<div class="avatar" style="background:${a.color}">${a.letter}</div>
+			<div style="min-width:0">
+				<div class="co">${esc(r.company || 'Unknown company')}</div>
+				<div class="ti">${esc(r.title || r.url)}</div>
+				<div class="mt"><span>${esc(r.date)} ${esc(r.time)}</span>${r.board ? `<span>${esc(r.board)}</span>` : ''}${badges}</div>
+				${note}${wait}${check}
+			</div>
+			<div class="right"><span class="pill ${esc(r.status)}">${esc(statusText(r.status))}</span><div class="acts">${rowActions(r, false)}</div></div>
+		</div>`;
+	}).join('') : `<div class="card vstate">${I('search')}<b>Nothing matches</b><span>Try another filter or search.</span></div>`;
+}
+$('hfilters').onclick = e => {
+	const b = e.target.closest('[data-filter]');
+	if (b) { hfilter = b.dataset.filter; if (state) renderRows(state.rows); }
+};
+$('hsearch').oninput = () => { hsearch = $('hsearch').value; if (state) renderRows(state.rows); };
+document.querySelectorAll('[data-goto-filter]').forEach(b => b.onclick = () => {
+	hfilter = b.dataset.gotoFilter; showTab('history'); if (state) renderRows(state.rows);
+});
+$('rows').onclick = e => {
+	if (e.target.closest('button, a, input')) return;
+	const card = e.target.closest('[data-job]');
+	if (card) openDetail(card.dataset.job);
+};
+$('rows').onkeydown = e => {
+	const card = e.target.closest('[data-job]');
+	if (card && e.key === 'Enter' && e.target === card) openDetail(card.dataset.job);
+};
+
+// row and panel actions (delegated, so they work wherever they are rendered)
+document.addEventListener('click', async e => {
+	const t = e.target.closest('[data-open], [data-url], [data-tab-id], [data-refill], [data-submitted], [data-copy]');
+	if (!t) return;
+	if (t.dataset.open !== undefined) return call('open_path', t.dataset.open);
+	if (t.dataset.url !== undefined) return call('open_path', t.dataset.url);
+	if (t.dataset.tabId !== undefined) return call('focus_tab', t.dataset.tabId);
+	if (t.dataset.refill !== undefined) { await call('refill', t.dataset.refill); return toast('Going back to that application to fill it.'); }
+	if (t.dataset.submitted !== undefined) {
+		const r = await call('mark_submitted', t.dataset.submitted);
+		toast('Marked submitted. It will not be applied to again.');
+		if (detail && detail.url === t.dataset.submitted) { detail.row = {...detail.row, ...((r && r.row) || {status: 'submitted'})}; renderDetailHead(); }
+		return refresh(false);
+	}
+	if (t.dataset.copy !== undefined) {
+		const text = (detail && detail.copy && detail.copy[t.dataset.copy]) || '';
+		try { await navigator.clipboard.writeText(text); }
+		catch (err) { const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
+		toast('Copied.');
+	}
+});
+
+/* Zoomable document viewer: pages as images, zoom (buttons, Ctrl+wheel, + - 0 keys), fit width, drag to pan */
+const viewers = {};
+const pageCache = new Map();
+function viewer(id) {
+	if (viewers[id]) return viewers[id];
+	const el = $(id);
+	el.innerHTML = `<div class="vbar">
+		<button class="ib" data-z="out" title="Zoom out (-)">${I('zoomout')}</button>
+		<span class="zlabel">100%</span>
+		<button class="ib" data-z="in" title="Zoom in (+)">${I('zoomin')}</button>
+		<button class="ib" data-z="fit" title="Fit to width">${I('fit')}</button>
+		<button class="btn ghost small" data-z="reset" title="Actual size (0)">100%</button>
+		<span class="hint vname" style="margin-left:8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap"></span>
+		<button class="btn ghost small" data-v="open">${I('external')} Open</button>
+		<button class="btn ghost small" data-v="folder">${I('folder')} Show folder</button>
+	</div><div class="vcanvas"><div class="vpages"></div></div>`;
+	const canvas = el.querySelector('.vcanvas'), pages = el.querySelector('.vpages'), label = el.querySelector('.zlabel');
+	const v = {el, zoom: 1, base: 794, path: '', folder: '', loaded: null, empty: ''};
+	v.apply = () => {
+		const w = Math.round(v.base * v.zoom);
+		pages.querySelectorAll('img').forEach(img => img.style.width = w + 'px');
+		label.textContent = Math.round(v.zoom * 100) + '%';
+		canvas.classList.toggle('pannable', canvas.scrollWidth > canvas.clientWidth + 2 || canvas.scrollHeight > canvas.clientHeight + 2);
+	};
+	v.set = (z) => {
+		z = Math.min(5, Math.max(0.2, z));
+		const cx = (canvas.scrollLeft + canvas.clientWidth / 2) / Math.max(1, canvas.scrollWidth);
+		const cy = (canvas.scrollTop + canvas.clientHeight / 2) / Math.max(1, canvas.scrollHeight);
+		v.zoom = z; v.apply();
+		canvas.scrollLeft = cx * canvas.scrollWidth - canvas.clientWidth / 2;
+		canvas.scrollTop = cy * canvas.scrollHeight - canvas.clientHeight / 2;
+	};
+	v.fit = (first) => { const avail = canvas.clientWidth - 56; if (avail > 50) v.set(Math.min(avail / v.base, first ? 1.1 : 2)); };
+	v.zoomBy = f => v.set(Math.round(v.zoom * f * 100) / 100);
+	el.querySelector('.vbar').onclick = e => {
+		const b = e.target.closest('[data-z], [data-v]');
+		if (!b) return;
+		const z = b.dataset.z, a = b.dataset.v;
+		if (z === 'in') v.zoomBy(1.2); else if (z === 'out') v.zoomBy(1 / 1.2); else if (z === 'fit') v.fit(); else if (z === 'reset') v.set(1);
+		if (a === 'open' && v.path) call('open_path', v.path);
+		if (a === 'folder' && (v.folder || v.path)) call('open_path', v.folder || dirname(v.path));
+	};
+	canvas.addEventListener('wheel', e => {
+		if (!e.ctrlKey || !v.loaded) return;
+		e.preventDefault(); v.zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1);
+	}, {passive: false});
+	let drag = null;
+	canvas.addEventListener('mousedown', e => {
+		if (e.button !== 0 || !canvas.classList.contains('pannable')) return;
+		drag = {x: e.clientX, y: e.clientY, l: canvas.scrollLeft, t: canvas.scrollTop}; canvas.classList.add('dragging'); e.preventDefault();
 	});
-	document.querySelectorAll('[data-submitted]').forEach(b => b.onclick = async () => {
-		await call('mark_submitted', b.dataset.submitted); toast('Marked submitted. It will not be applied to again.'); refresh(false);
-	});
+	window.addEventListener('mousemove', e => { if (drag) { canvas.scrollLeft = drag.l - (e.clientX - drag.x); canvas.scrollTop = drag.t - (e.clientY - drag.y); } });
+	window.addEventListener('mouseup', () => { drag = null; canvas.classList.remove('dragging'); });
+	v.show = (html) => { pages.innerHTML = html; v.apply(); };
+	v.load = async (path, folder, emptyTitle, emptyText) => {
+		v.folder = folder || '';
+		el.querySelector('[data-v=open]').hidden = !path;
+		el.querySelector('[data-v=folder]').hidden = !(folder || path);
+		el.querySelector('.vname').textContent = path ? basename(path) : '';
+		if (v.loaded === path && path) return;
+		v.path = path; v.loaded = null;
+		if (!path) { v.show(`<div class="vstate">${I('file')}<b>${esc(emptyTitle)}</b><span>${esc(emptyText)}</span></div>`); label.textContent = '–'; return; }
+		v.show('<div class="vstate"><div class="spinner"></div><span>Loading...</span></div>');
+		let r = pageCache.get(path);
+		if (!r) {
+			try { r = await api.document_pages(path, 2); } catch (err) { r = {error: String(err)}; }
+			if (r && !r.error && r.pages && r.pages.length) pageCache.set(path, r);
+		}
+		if (v.path !== path) return;  // another document was opened meanwhile
+		if (!r || r.error || !r.pages || !r.pages.length) {
+			v.show(`<div class="vstate">${I('file')}<b>Could not show this file</b><span>${esc((r && r.error) || 'It is empty.')}</span></div>`);
+			return;
+		}
+		v.loaded = path;
+		v.base = /\.(png|jpe?g|webp|gif)$/i.test(path) ? Math.max(200, r.width || 794) : 794;
+		v.show(r.pages.map((src, i) => `<img src="${esc(src)}" alt="Page ${i + 1}" draggable="false">`).join(''));
+		const first = () => { v.fit(true); canvas.scrollTop = 0; canvas.scrollLeft = 0; };
+		if (canvas.clientWidth > 0) first(); else requestAnimationFrame(first);  // fitted before anyone can zoom
+	};
+	viewers[id] = v;
+	return v;
 }
 
+/* Job detail panel: an A-to-Z of one job */
+let detail = null;
+function docsOf() {
+	const rec = (detail && detail.record) || {}, row = (detail && detail.row) || {}, d = rec.documents || {};
+	const resume = d.resume_pdf_exists === false ? '' : d.resume_pdf || row.resume || '';
+	const letter = d.cover_letter_pdf_exists === false ? '' : d.cover_letter_pdf || row.cover_letter || '';
+	return {resume, letter, folder: d.folder || dirname(resume || letter || d.resume_pdf || ''), text: d.cover_letter_text || '', subject: d.email_subject || '', shot: row.screenshot || rec.screenshot || ''};
+}
+async function openDetail(url) {
+	const row = ((state && state.rows) || []).find(r => r.url === url) || {url};
+	detail = {url, row, record: {}, copy: {}, tab: 'summary'};
+	$('detail').hidden = false; document.body.classList.add('noscroll');
+	renderDetailHead();
+	$('dp_summary').innerHTML = '<div class="vstate"><div class="spinner"></div><span>Loading...</span></div>';
+	for (const id of ['v_resume', 'v_letter', 'v_shot']) { const v = viewer(id); v.loaded = null; v.path = ''; }
+	setDtab('summary');
+	let data = null;
+	try { data = await api.job_detail(url); } catch (e) { data = null; }
+	if (!detail || detail.url !== url) return;
+	if (data && !data.error) { detail.row = {...row, ...(data.row || {})}; detail.record = data.record || {}; }
+	renderDetailHead(); renderDetailSummary(); renderSubmitted(); renderLetterText();
+	setDtab(detail.tab);
+}
+function closeDetail() {
+	detail = null; $('detail').hidden = true; document.body.classList.remove('noscroll');
+	$('d_actions').innerHTML = '';
+}
+$('d_close').onclick = closeDetail;
+$('d_backdrop').onclick = closeDetail;
+$('dtabs').onclick = e => { const b = e.target.closest('[data-dtab]'); if (b) setDtab(b.dataset.dtab); };
+function setDtab(name) {
+	if (!detail) return;
+	detail.tab = name;
+	document.querySelectorAll('#dtabs button').forEach(b => b.classList.toggle('on', b.dataset.dtab === name));
+	document.querySelectorAll('.dpane').forEach(p => p.classList.toggle('on', p.id === 'dp_' + name));
+	const d = docsOf();
+	if (name === 'resume') viewer('v_resume').load(d.resume, d.folder, 'No resume for this job', 'Jobify writes a tailored resume once it reaches the application form. Skipped jobs and ones that failed early have none.');
+	if (name === 'letter') viewer('v_letter').load(d.letter, d.folder, 'No cover letter for this job', 'A cover letter is written together with the resume for each application.');
+	if (name === 'submitted') viewer('v_shot').load(d.shot, '', 'No screenshot', 'A screenshot of the form is saved when Jobify hands an application over to you.');
+}
+function renderDetailHead() {
+	const r = detail.row || {}, rec = detail.record || {};
+	const company = r.company || rec.company || 'Unknown company', title = r.title || rec.title || '';
+	const a = avatar(company);
+	$('d_avatar').textContent = (company[0] || '?').toUpperCase(); $('d_avatar').style.background = a.color;
+	$('d_company').textContent = company;
+	$('d_title').textContent = title;
+	$('d_meta').innerHTML = `<span class="pill ${esc(r.status)}">${esc(statusText(r.status))}</span>`
+		+ `<span>${I('clock')} ${esc([r.date, r.time].filter(Boolean).join(' '))}</span>`
+		+ (r.board || rec.board ? `<span>${esc(r.board || rec.board)}</span>` : '');
+	$('d_actions').innerHTML = rowActions({...r, url: detail.url}, true);
+}
+const listHtml = (items, cls = 'list') => items && items.length ? `<ul class="${cls}">${items.map(x => `<li>${cls === 'match' ? I('check') : ''}<span>${esc(x)}</span></li>`).join('')}</ul>` : '';
+function renderDetailSummary() {
+	const r = detail.row || {}, rec = detail.record || {}, s = rec.summary || {}, sub = rec.submitted || {}, d = docsOf();
+	const out = [];
+	if (!rec || !Object.keys(rec).length) out.push(`<div class="notice"><div class="body"><div class="ttl">An older application</div><div class="hint">This job was handled before Jobify kept a full record. Here is what was saved.</div></div></div>`);
+	if (s.about) out.push(`<div class="sect"><h3>${I('info')} What the job is about</h3><div class="about">${esc(s.about)}</div></div>`);
+	const facts = [['Status', statusText(r.status || rec.status)], ['Location', s.location], ['Salary', s.salary], ['Type', s.employment_type], ['Board', r.board || rec.board], ['Applied', [r.date, r.time].filter(Boolean).join(' ')]].filter(f => f[1]);
+	out.push(`<div class="sect"><div class="facts">${facts.map(([k, v]) => `<div class="fact"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('')}</div>
+		<div class="row" style="margin-top:12px"><button class="lnk" data-url="${esc(detail.url)}">${I('external')} ${esc(detail.url)}</button></div></div>`);
+	if (s.why_match && s.why_match.length) out.push(`<div class="sect"><h3>Why it fits you</h3>${listHtml(s.why_match, 'match')}</div>`);
+	const resp = listHtml(s.responsibilities), req = listHtml(s.requirements);
+	if (resp || req) out.push(`<div class="two">${resp ? `<div class="sect"><h3>Responsibilities</h3>${resp}</div>` : ''}${req ? `<div class="sect"><h3>Requirements</h3>${req}</div>` : ''}</div>`);
+	// what we submitted, in short
+	const fields = sub.fields || [], files = sub.files || [];
+	const docs = files.map(f => `<span class="file">${I('file')} ${esc(basename(f))}</span>`);
+	const sentLines = [];
+	if (fields.length) sentLines.push(`<p>Filled <b>${fields.length}</b> field${fields.length === 1 ? '' : 's'} on the form${sub.page_title ? ` "${esc(sub.page_title)}"` : ''}.</p>`);
+	if (docs.length) sentLines.push(`<p class="hint" style="margin:6px 0 2px">Attached on the form:</p><div class="files" style="margin:0 0 6px">${docs.join('')}</div>`);
+	if (fields.length) sentLines.push(`<table class="fields">${fields.slice(0, 6).map(f => `<tr><td>${esc(f.label)}</td><td>${esc(f.value)}</td></tr>`).join('')}</table>${fields.length > 6 ? `<button class="lnk" data-goto-dtab="submitted" style="margin-top:6px">See all ${fields.length} fields</button>` : ''}`);
+	if (!sentLines.length) sentLines.push('<p class="hint">Nothing was filled in for this job.</p>');
+	out.push(`<div class="sect"><h3>${I('list')} What we submitted</h3>${sentLines.join('')}</div>`);
+	const result = [], notes = r.notes || rec.notes || '', chk = r.check || rec.check || '';
+	if (notes) result.push(`<p>${esc(notes)}</p>`);
+	if (chk) result.push(`<div class="${chk.startsWith('All required') ? 'checkok' : 'checkwarn'}">${chk.startsWith('All required') ? '✓ ' : '⚠ '}${esc(chk)}</div>`);
+	if (r.unanswered_questions) result.push(`<p class="hint" style="color:var(--warn)">Waiting on your answers: ${esc(r.unanswered_questions)}</p>`);
+	if (result.length) out.push(`<div class="sect"><h3>Result</h3>${result.join('')}</div>`);
+	const qs = (rec.questions || []).map(q => typeof q === 'string' ? q : [q.question, q.answer && q.answer !== '(dismissed)' ? '→ ' + q.answer : ''].filter(Boolean).join(' ')).filter(Boolean);
+	if (qs.length) out.push(`<div class="sect"><h3>Questions asked</h3>${listHtml(qs)}</div>`);
+	const tl = rec.timeline || [];
+	if (tl.length) out.push(`<div class="sect"><h3>${I('clock')} Timeline</h3><div class="timeline">${tl.map(t => `<div class="${esc(t.level || '')}"><time>${esc(t.time)}</time>${esc(t.text)}</div>`).join('')}</div></div>`);
+	if (rec.job_description) out.push(`<div class="sect"><details class="jd"><summary>Full job description</summary><div class="txt">${esc(rec.job_description)}</div></details></div>`);
+	$('dp_summary').innerHTML = out.join('');
+}
+document.addEventListener('click', e => { const b = e.target.closest('[data-goto-dtab]'); if (b) setDtab(b.dataset.gotoDtab); });
+function renderSubmitted() {
+	const rec = detail.record || {}, sub = rec.submitted || {}, fields = sub.fields || [], files = sub.files || [], d = docsOf();
+	const parts = [];
+	if (sub.page_title || sub.page_url) parts.push(`<p style="margin:0 0 8px"><b>${esc(sub.page_title || 'Application form')}</b>${sub.page_url ? `<br><button class="lnk" data-url="${esc(sub.page_url)}">${esc(sub.page_url)}</button>` : ''}</p>`);
+	parts.push(fields.length ? `<table class="fields">${fields.map(f => `<tr><td>${esc(f.label)}</td><td>${esc(f.value)}</td></tr>`).join('')}</table>`
+		: '<p class="hint">No form fields were recorded for this job (it was skipped, failed before the form, or ran before Jobify kept this record).</p>');
+	const made = [d.resume ? `<button class="file lnk" data-goto-dtab="resume">${I('file')} Tailored resume</button>` : '', d.letter ? `<button class="file lnk" data-goto-dtab="letter">${I('file')} Cover letter</button>` : ''].filter(Boolean);
+	const docs = files.map(f => `<span class="file">${I('file')} ${esc(basename(f))}</span>`);
+	$('d_submitted').innerHTML = `<div class="sect"><h3>${I('list')} Form fields as Jobify left them</h3>${parts.join('')}</div>`
+		+ `<div class="sect"><h3>${I('file')} Files attached on the form</h3>${docs.length ? `<div class="files">${docs.join('')}</div>` : '<p class="hint">No file uploads were left on the form.</p>'}`
+		+ (made.length ? `<p class="hint" style="margin:10px 0 4px">Made for this job (click to view):</p><div class="files">${made.join('')}</div>` : '') + `</div>`
+		+ `<div class="sect" style="margin-bottom:10px"><h3>${I('image')} Screenshot of the form</h3><p class="hint" style="margin:0">Zoom with the buttons, Ctrl + mouse wheel, or the + and - keys. Drag to move around.</p></div>`;
+}
+function renderLetterText() {
+	const d = docsOf();
+	detail.copy = {letter: d.text};
+	$('d_lettertext').innerHTML = d.text
+		? `<div class="row" style="margin-bottom:10px"><b style="flex:1">Letter text</b><button class="btn ghost small" data-copy="letter">${I('copy')} Copy</button></div>`
+			+ (d.subject ? `<div class="hint" style="margin-bottom:10px">Email subject: ${esc(d.subject)}</div>` : '') + `<div class="txt">${esc(d.text)}</div>`
+		: '<div class="hint">The letter text is shown here once a cover letter was written for this job.</div>';
+}
+document.addEventListener('keydown', e => {
+	if (!detail) return;
+	if (e.key === 'Escape') return closeDetail();
+	if (e.target.closest && e.target.closest('input, textarea, select')) return;
+	const id = {resume: 'v_resume', letter: 'v_letter', submitted: 'v_shot'}[detail.tab];
+	if (!id) return;
+	const v = viewer(id);
+	if (e.key === '+' || e.key === '=') { e.preventDefault(); v.zoomBy(1.2); }
+	else if (e.key === '-' || e.key === '_') { e.preventDefault(); v.zoomBy(1 / 1.2); }
+	else if (e.key === '0') { e.preventDefault(); v.set(1); }
+});
+
+/* Run page */
 function renderState(st) {
 	const r = st.runner;
 	$('state').textContent = r; $('state').className = 'state ' + r;
 	$('today').textContent = st.today; $('cap').textContent = st.cap;
-	$('start').textContent = r === 'paused' || r === 'held' ? 'Continue' : 'Start';
+	$('todaybar').style.width = Math.min(100, 100 * st.today / Math.max(1, st.cap)) + '%';
+	$('startlabel').textContent = r === 'paused' || r === 'held' ? 'Continue' : 'Start';
 	$('start').disabled = !(r === 'idle' || r === 'paused' || r === 'held');
 	$('takeover').disabled = !(r === 'running' || r === 'starting');
 	$('pause').disabled = !(r === 'running' || r === 'paused' || r === 'starting');
-	$('pause').textContent = r === 'paused' ? 'Resume' : 'Pause';
+	$('pauselabel').textContent = r === 'paused' ? 'Resume' : 'Pause';
 	$('stop').disabled = r === 'idle' || r === 'stopping';
 	showHelp(st.help);
 	const c = st.current || {};
-	$('current').textContent = c.phase === 'apply' ? `Applying: ${[c.title, c.company].filter(Boolean).join(' at ') || c.url}`
-		: c.phase === 'search' ? `Searching ${c.board}...` : '';
+	const busy = r === 'running' || r === 'starting';
+	$('nowbox').classList.toggle('busy', busy && !!c.phase && c.phase !== 'rest' || r === 'starting');
+	$('nowbox').classList.toggle('rest', c.phase === 'rest');
+	$('nowlabel').textContent = c.phase === 'apply' ? 'Applying now' : c.phase === 'search' ? 'Searching' : c.phase === 'rest' ? 'Resting' : {starting: 'Starting', running: 'Running', paused: 'Paused', held: 'Waiting for you', stopping: 'Stopping', idle: 'Ready'}[r] || r;
+	$('current').textContent = c.phase === 'apply' ? ([c.title, c.company].filter(Boolean).join(' at ') || c.url)
+		: c.phase === 'search' ? `${c.board} for new jobs...`
+		: c.phase === 'rest' ? `Resting — searching the boards again at ${c.until || 'soon'}`
+		: {idle: 'Press Start to begin applying', starting: 'Opening the browser...', paused: 'Paused after the last job', held: 'Click Continue when you are done', stopping: 'Finishing up...'}[r] || 'Working...';
 	$('chatgpt_status').textContent = !st.chatgpt.signed_in ? 'Not signed in'
 		: 'Signed in' + (st.chatgpt.email ? ' as ' + st.chatgpt.email : '') + (st.chatgpt.plan_usage ? '' : ' (plan use not allowed: sign in again)');
+	renderOnboard(st);
+	renderLastStop(st);
 }
+
+function renderOnboard(st) {
+	const s = st.setup;
+	if (!s) { $('onboard').hidden = true; $('setupdot').hidden = true; return; }
+	const steps = [
+		['profile', 'Add your profile', 'Everything about you, in one file. "New from template" gives you a starter.', 'card_files'],
+		['criteria', 'Say which jobs you want', 'Titles, locations, remote, salary floor, companies to avoid.', 'card_files'],
+		['model', 'Connect an AI model', s.model_error || 'A Gemini or OpenAI API key, or sign in with ChatGPT.', 'card_model'],
+	];
+	const done = steps.filter(x => s[x[0]]).length;
+	$('onboard').hidden = done === steps.length;
+	$('setupdot').hidden = done === steps.length;
+	$('onboard_count').textContent = `${done} of ${steps.length} done`;
+	const html = steps.map(([k, t, d, card]) => `<div class="step${s[k] ? ' done' : ''}" data-step="${k}"><div class="chk">${I('check')}</div>
+		<div class="txt"><div class="st">${esc(t)}</div><div class="sd">${esc(d)}</div></div>${k === 'model' ? `<button class="btn ghost small" data-testmodel>Test</button>` : ''}${s[k] ? '' : `<button class="btn small" data-setup="${card}">Set up</button>`}</div>`).join('')
+		+ `<div class="step"><div class="chk" style="border-style:dashed"></div><div class="txt"><div class="st">Log in to LinkedIn, Indeed and Gmail <span class="hint">(recommended)</span></div>
+		<div class="sd">So the boards and email applications work without asking you during the run.</div></div><button class="btn ghost small" data-logins>Open login browser</button></div>`;
+	if ($('onboard_steps').innerHTML !== html) $('onboard_steps').innerHTML = html;
+}
+$('onboard_steps').onclick = e => {
+	const b = e.target.closest('[data-setup]');
+	if (b) { showTab('setup'); const card = $(b.dataset.setup); if (card) { card.scrollIntoView({behavior: 'smooth', block: 'start'}); card.animate([{boxShadow: '0 0 0 3px var(--accent)'}, {boxShadow: '0 0 0 0 transparent'}], 1400); } }
+	if (e.target.closest('[data-logins]')) openLogins();
+	if (e.target.closest('[data-testmodel]')) {
+		testModel().then(r => toast(r && r.ok ? `The AI model works (${r.model || 'model'}).` : (r && r.error) || 'The AI model did not answer.', 6000));
+	}
+};
+
+let dismissedStop = '';
+try { dismissedStop = localStorage.getItem('jobify.dismissedStop') || ''; } catch (e) { /* storage off */ }
+function renderLastStop(st) {
+	const ls = st.last_stop, key = ls ? `${ls.time}|${ls.text}` : '';
+	const show = st.runner === 'idle' && ls && ls.text && key !== dismissedStop;
+	$('laststop').hidden = !show;
+	if (!show) return;
+	$('laststop').className = 'notice ' + (ls.kind || 'stopped');
+	$('laststop_title').textContent = {error: 'The loop stopped because of a problem', cap: 'Daily limit reached', done: 'All done for now', stopped: 'The loop stopped'}[ls.kind] || 'The loop stopped';
+	$('laststop_text').textContent = (ls.time ? ls.time + ' · ' : '') + ls.text;
+}
+$('laststop_close').onclick = () => {
+	const ls = state && state.last_stop;
+	dismissedStop = ls ? `${ls.time}|${ls.text}` : '';
+	try { localStorage.setItem('jobify.dismissedStop', dismissedStop); } catch (e) { /* storage off */ }
+	$('laststop').hidden = true;
+};
 
 const LINK_LABEL = {waiting: 'waiting', applying: 'applying now', filled: 'filled, review it', email_drafted: 'email drafted',
 	needs_input: 'needs your answers', submitted: 'submitted', skipped: 'skipped', failed: 'failed'};
@@ -500,9 +1195,22 @@ async function refresh(full) {
 	state = st;
 	renderState(st);
 	renderLinks(st.links);
-	renderQuestions(st.questions);
-	renderRows(st.rows);
+	renderQuestions(st.questions || []);
+	renderRows(st.rows || []);
+	if (detail) {  // keep the open job's status current
+		const row = (st.rows || []).find(r => r.url === detail.url);
+		if (row && (row.status !== detail.row.status || row.tab_id !== detail.row.tab_id)) { detail.row = {...detail.row, ...row}; renderDetailHead(); }
+	}
 	if (full) fillSetup(st);
+}
+
+function logLine(time, text, cls) {
+	const log = $('log');
+	if (log.querySelector('.empty')) log.innerHTML = '';
+	const d = document.createElement('div'); d.className = cls || '';
+	d.innerHTML = `<time>${esc(time)}</time><span>${esc(text)}</span>`;
+	log.appendChild(d);
+	while (log.children.length > 600) log.firstChild.remove();
 }
 
 async function poll() {
@@ -510,27 +1218,28 @@ async function poll() {
 		const events = await api.events(since);
 		if (events.length) {
 			const log = $('log');
-			if (log.querySelector('.empty')) log.innerHTML = '';
+			const atBottom = log.scrollTop + log.clientHeight >= log.scrollHeight - 30;
 			let changed = false;
 			for (const e of events) {
 				since = e.seq;
 				let text = null, cls = '';
 				if (e.kind === 'log') { text = e.text; cls = e.level; }
 				else if (e.kind === 'blocked') { text = `Guard held "${e.text}" for your review.`; cls = 'blocked'; }
-				else if (e.kind === 'question') text = `Question for you: ${e.question}`;
+				else if (e.kind === 'question') { text = `Question for you: ${e.question}`; cls = 'blocked'; }
 				else if (e.kind === 'help') { startHelp(e); text = `Needs you: ${e.reason}`; cls = 'blocked'; }
 				else if (e.kind === 'help_end') showHelp(null);
+				else if (e.kind === 'stopped') { text = e.text; cls = e.stop_kind === 'error' ? 'error' : 'good'; }
 				else if (e.kind === 'update') {
 					if (e.stage === 'available') { showUpdate(e.version); text = `Version ${e.version} is available: Setup > Updates.`; }
 					else if (e.stage === 'download') $('updatestatus').textContent = e.total ? `Downloading ${Math.round(100 * e.done / e.total)}%` : 'Downloading...';
 					else if (e.stage === 'installing') { $('updatestatus').textContent = 'Installing; Jobify will reopen.'; text = `Installing version ${e.version}...`; }
 					else if (e.stage === 'error') { $('updatestatus').textContent = e.text; text = 'Update failed: ' + e.text; cls = 'error'; }
 				}
-				else if (e.kind === 'job') text = `${e.row.status.replace('_', ' ')}: ${[e.row.title, e.row.company].filter(Boolean).join(' at ')} (${e.today}/${e.cap} today)`;
-				if (text) { const d = document.createElement('div'); d.className = cls; d.innerHTML = `<time>${esc(e.time)}</time>${esc(text)}`; log.appendChild(d); }
+				else if (e.kind === 'job') { text = `${statusText(e.row.status)}: ${[e.row.title, e.row.company].filter(Boolean).join(' at ')} (${e.today}/${e.cap} today)`; cls = ['filled', 'email_drafted'].includes(e.row.status) ? 'good' : e.row.status === 'failed' ? 'error' : ''; }
+				if (text) logLine(e.time, text, cls);
 				changed = true;
 			}
-			log.scrollTop = log.scrollHeight;
+			if (atBottom) log.scrollTop = log.scrollHeight;
 			if (changed) await refresh(false);
 		} else if (state && state.runner !== 'idle') {
 			await refresh(false);
