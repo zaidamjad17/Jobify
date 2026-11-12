@@ -61,6 +61,11 @@ or forms the agent could not open. Everything here attacks that.
 
 ## Shipped
 
+- ✅ 0.5.0: New look; History opens each job from A to Z (summary, the resume and cover letter in a zoomable viewer,
+  every field filled, a screenshot, a timeline); errors no longer end the run (hold after 3 in a row, refused key holds
+  at once, failing boards left out); keep searching after a rest; Open CSV opens a copy (Excel's lock stopped the loop);
+  Run says why the loop last stopped; first-run checklist.
+
 - ✅ 0.3.0: Human handoff with sound (park after 60 s, Take over / Continue), pre-flight login and bot-check, final check
   with screenshot, error-reading rule, stuck detector, backup model, crash recovery, fresh jobs first, review tab limit,
   daily summary and "why not finished" report, profile completeness score.

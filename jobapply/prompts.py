@@ -68,7 +68,8 @@ submit.
    required field is still empty because of a question you sent to ask_user, or a login is needed.
 5. If the posting is closed or the page cannot be used, status "failed" with the reason.
 Finish with the JobOutcome: company, title, the posting URL, the board (linkedin, indeed, greenhouse, lever, ashby,
-wellfound, workday, company site, email), status, unanswered questions, and short notes for the user."""
+wellfound, workday, company site, email), status, unanswered questions, short notes for the user, and "about": two
+sentences on what the job is (also for a skipped job)."""
 
 REFILL_TASK = """Continue the application at {url} in the current tab. It was filled earlier, and fields were left
 empty for questions the user has now answered; their answers are in the candidate profile (Saved answers). The
@@ -118,6 +119,7 @@ class JobOutcome(BaseModel):
 	board: str = ''
 	unanswered_questions: list[str] = Field(default_factory=list)
 	notes: str = Field('', description='one or two sentences for the user: what is left, why it was skipped or failed')
+	about: str = Field('', description='two sentences on what the job is: the role, the company, location and main work')
 
 
 class FoundJob(BaseModel):

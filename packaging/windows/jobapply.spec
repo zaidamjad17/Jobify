@@ -3,23 +3,26 @@
 #   uv run --with pyinstaller==6.22.3 pyinstaller packaging/windows/jobapply.spec --noconfirm
 # The exe also runs the helper processes browser-use starts with sys.executable (jobapply/frozen.py), so every module
 # they run (browser_use.repl.worker, browser_harness.daemon) must be bundled: collect_submodules below.
-from PyInstaller.utils.hooks import collect_data_files, collect_submodules, copy_metadata
+from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules, copy_metadata
 
 ROOT = SPECPATH + '/../..'
 
 hidden = []
-for package in ('jobapply', 'browser_use', 'browser_harness', 'pydantic_ai', 'webview', 'genai_prices', 'websockets', 'google.genai'):
+for package in ('jobapply', 'browser_use', 'browser_harness', 'pydantic_ai', 'webview', 'genai_prices', 'websockets', 'google.genai',
+                'pypdfium2', 'pypdfium2_raw'):
     hidden += collect_submodules(package, filter=lambda name: '.tests' not in name and '.test_' not in name)
 
 datas = [
     (ROOT + '/jobapply/ui', 'jobapply/ui'),
     (ROOT + '/jobapply/templates', 'jobapply/templates'),
 ]
-for package in ('browser_use', 'browser_harness', 'genai_prices', 'certifi', 'webview'):
+for package in ('browser_use', 'browser_harness', 'genai_prices', 'certifi', 'webview', 'pypdfium2', 'pypdfium2_raw'):
     datas += collect_data_files(package)
+# pdfium.dll for the History viewer (the resume and cover letter PDFs shown in the app)
+binaries = collect_dynamic_libs('pypdfium2_raw')
 # importlib.metadata.version() at runtime (genai-prices, Pydantic AI, browser-use telemetry) needs the dist-info
 for dist in ('browser-use', 'browser-harness', 'genai-prices', 'pydantic-ai-slim', 'pydantic', 'google-genai', 'openai',
-             'anthropic', 'httpx', 'mcp', 'websockets', 'pywebview'):
+             'anthropic', 'httpx', 'mcp', 'websockets', 'pywebview', 'pypdfium2', 'pypdfium2_raw'):
     try:
         datas += copy_metadata(dist)
     except Exception:  # not installed in this environment
@@ -28,6 +31,7 @@ for dist in ('browser-use', 'browser-harness', 'genai-prices', 'pydantic-ai-slim
 a = Analysis(
     [SPECPATH + '/launch.py'],
     pathex=[ROOT],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hidden,
     excludes=['tkinter', 'matplotlib', 'PyQt5', 'PyQt6', 'PySide2', 'PySide6'],

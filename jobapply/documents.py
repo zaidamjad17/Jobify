@@ -65,10 +65,23 @@ class ResumeData(BaseModel):
 	languages: list[str] = Field(default_factory=list)
 
 
+class JobSummary(BaseModel):
+	"""What the job is, for the user's history (from the posting only)."""
+
+	about: str = Field('', description='2-3 plain sentences: the role, the team or product, and the main work')
+	responsibilities: list[str] = Field(default_factory=list, description='up to 6 main duties, short')
+	requirements: list[str] = Field(default_factory=list, description='up to 6 key requirements, short')
+	location: str = Field('', description='city / country / remote / hybrid, as the posting says')
+	salary: str = Field('', description='the pay range when the posting states one, else empty')
+	employment_type: str = Field('', description='full-time, part-time, contract, internship... when stated')
+	why_match: list[str] = Field(default_factory=list, description='2-4 reasons from the profile why the candidate fits this job')
+
+
 class TailoredDocs(BaseModel):
 	resume: ResumeData
 	cover_letter: str = Field(description='the letter body: greeting to sign-off, plain text, paragraphs split by blank lines')
 	email_subject: str = Field(description='subject line for applying by email, e.g. "Application: <title> - <name>"')
+	job_summary: JobSummary | None = Field(None, description='what the job is, from the posting')
 
 
 INSTRUCTIONS = """You tailor a resume and write a cover letter for one job application.
@@ -76,7 +89,8 @@ Use ONLY facts from the candidate profile: never invent employers, schools, titl
 numbers or skills. You may reorder, select, shorten and reword them so the most relevant come first, and mirror the
 job's wording where the profile supports it. Leave a field empty rather than guessing.
 The cover letter: {tone}. Address the company by name, name the role, give 2-3 concrete reasons from the profile, end
-with a short sign-off with the candidate's name. No placeholders like [Company] in the output."""
+with a short sign-off with the candidate's name. No placeholders like [Company] in the output.
+The job summary describes the posting itself (only what it states) so the candidate can recall the job later."""
 
 
 class FactError(ValueError):

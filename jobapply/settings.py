@@ -7,7 +7,7 @@ import json
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
-from jobapply.paths import app_home
+from jobapply.paths import app_home, replace_retrying
 
 PROVIDERS = ('gemini', 'openai', 'chatgpt')
 BOARDS = {  # id -> (label, search URL hint for the agent)
@@ -49,6 +49,8 @@ class Settings:
 	max_job_age_days: int = 14  # postings older than this are skipped; the newest are applied to first
 	job_urls: list[str] = field(default_factory=list)  # pasted URLs, applied to before any board search
 	browser_executable: str = ''  # '' = Chrome or Edge, whichever is installed
+	keep_searching: bool = True  # when the boards have nothing new: rest, then search again (until the daily cap)
+	search_again_minutes: int = 30
 
 	@classmethod
 	def path(cls) -> Path:
@@ -82,10 +84,12 @@ class Settings:
 			self.backup_provider = ''
 		if isinstance(self.daily_cap, bool) or not isinstance(self.daily_cap, int) or not 1 <= self.daily_cap <= 200:
 			raise ValueError(f'daily_cap must be a whole number from 1 to 200, not {self.daily_cap!r}')
-		for name, low, high in (('max_review_tabs', 1, 100), ('max_job_age_days', 1, 365)):
+		for name, low, high in (('max_review_tabs', 1, 100), ('max_job_age_days', 1, 365), ('search_again_minutes', 5, 720)):
 			value = getattr(self, name)
 			if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
 				raise ValueError(f'{name} must be a whole number from {low} to {high}, not {value!r}')
+		if not isinstance(self.keep_searching, bool):
+			raise ValueError(f'keep_searching must be true or false, not {self.keep_searching!r}')
 		unknown = [b for b in self.boards if b not in BOARDS]
 		if unknown:
 			raise ValueError(f'unknown job boards: {", ".join(unknown)}')
@@ -96,7 +100,7 @@ class Settings:
 		path = self.path()
 		tmp = path.with_suffix('.tmp')
 		tmp.write_text(json.dumps(asdict(self), indent=2), encoding='utf-8')
-		tmp.replace(path)
+		replace_retrying(tmp, path)
 
 	def public(self) -> dict:
 		"""For the UI: keys are reported as set or not, never sent back."""

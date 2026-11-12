@@ -109,6 +109,25 @@ def test_loop_fills_one_job_and_hands_the_tab_over(tmp_path, monkeypatch):
 		assert 'clicks 0' in str(seen[3][-1])  # the agent's own click was held
 		assert any(e['kind'] == 'blocked' and 'Submit application' in e['text'] for e in events)
 
+		# User request: History shows each job's CV in the app and an A-to-Z of the job (about it, what was sent)
+		from jobapply import records
+		from jobapply.app import Api
+
+		record = records.load(job.as_uri())
+		assert record['job_description'] == 'Acme needs a Python engineer.'
+		assert record['documents']['resume_pdf'] == row.resume and 'Dear Acme' in record['documents']['cover_letter_text']
+		assert record['status'] == 'needs_input' and record['questions'] == ['What is your desired salary?']
+		assert any('Applying' in line['text'] for line in record['timeline'])
+		assert record['submitted']['page_title'] == 'Engineer at Acme'
+		detail = Api().job_detail(job.as_uri())
+		assert detail['row']['company'] == 'Acme' and detail['record']['documents']['resume_pdf_exists'] is True
+		pages = Api().document_pages(row.resume, 1.0)
+		assert len(pages['pages']) == 1 and pages['pages'][0].startswith('data:image/png;base64,')
+		assert 550 < pages['width'] < 650  # A4 at 72 dpi is 595 points wide
+		shot = Api().document_pages(row.screenshot)
+		assert shot['pages'][0].startswith('data:image/png;base64,') and shot['width'] > 100
+		assert 'error' in Api().document_pages(str(tmp_path / 'profile.md'))  # outside the data folder
+
 		ws = r._ws()
 		with CDP(ws) as cdp:  # released: the user's click goes through in that tab
 			session = cdp.send('Target.attachToTarget', targetId=row.tab_id, flatten=True)['sessionId']
@@ -315,6 +334,7 @@ def test_an_empty_search_round_goes_one_page_deeper_instead_of_ending_the_loop(t
 		criteria_path=str(tmp_path / 'p.md'),
 		gemini_api_key='k',
 		boards=['linkedin', 'indeed'],
+		keep_searching=False,
 	)
 	monkeypatch.setattr(runner_mod, 'agent_llm', lambda s: None)
 	monkeypatch.setattr(runner_mod, 'writer_model', lambda llm: None)
@@ -802,6 +822,7 @@ def test_preflight_asks_for_help_on_a_logged_out_board_and_skips_it_when_nobody_
 		criteria_path=str(tmp_path / 'p.md'),
 		gemini_api_key='k',
 		boards=['linkedin', 'indeed', 'lever'],
+		keep_searching=False,
 		browser_executable=chrome,
 	)
 	monkeypatch.setattr(runner_mod, 'agent_llm', lambda s, provider=None: None)
@@ -875,9 +896,12 @@ def test_take_over_during_a_search_holds_the_loop_instead_of_ending_it(tmp_path,
 		criteria_path=str(tmp_path / 'p.md'),
 		gemini_api_key='k',
 		boards=['lever'],
+		keep_searching=False,
 		browser_executable=chrome,
 	)
-	model, seen = script(('python', {'code': SLOW}), ('finish', {'success': True, 'result': {'jobs': []}}))
+	model, seen = script(
+		('python', {'code': SLOW}), ('finish', {'success': True, 'result': {'jobs': [], 'blocked': 'No postings on this page.'}})
+	)
 	monkeypatch.setattr(runner_mod, 'agent_llm', lambda s, provider=None: model)
 	monkeypatch.setattr(runner_mod, 'writer_model', lambda m: None)
 	events: list[dict] = []

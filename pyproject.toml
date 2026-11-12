@@ -137,5 +137,6 @@ dev = [
 ]
 # Jobify desktop app (jobapply/, not part of the browser-use wheel): uv sync --group jobapply; uv run python -m jobapply
 jobapply = [
+    "pypdfium2==5.14.0",  # History: the resume and cover letter PDFs shown in the app
     "pywebview==6.2.1",
 ]

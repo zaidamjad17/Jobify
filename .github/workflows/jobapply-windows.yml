@@ -38,7 +38,7 @@ jobs:
           enable-cache: true
       - run: uv sync --locked --group jobapply --python 3.12
       - name: Tests (no browser)
-        run: uv run --no-sync pytest tests/ci/test_jobapply.py
+        run: uv run --no-sync pytest tests/ci/test_jobapply.py tests/ci/test_jobapply_reliability.py
       - name: PyInstaller
         run: uv run --no-sync --with pyinstaller==6.22.3 pyinstaller packaging/windows/jobapply.spec --noconfirm
       - name: The exe runs browser-use's helper processes
@@ -47,6 +47,12 @@ jobs:
           out=$(dist/Jobify/Jobify.exe -I -c "import sys, browser_use.repl.worker, browser_harness.daemon; sys.stdout.reconfigure(line_buffering=True); print('helpers ok')" | cat)
           echo "$out"
           test "$out" = "helpers ok"
+      - name: The exe renders PDFs (History shows each job's resume in the app)
+        shell: bash
+        run: |
+          out=$(dist/Jobify/Jobify.exe -I -c "import sys, pypdfium2 as p; d = p.PdfDocument.new(); d.new_page(595, 842); img = d[0].render(scale=1).to_pil(); sys.stdout.reconfigure(line_buffering=True); print('pdf ok', img.size)" | cat)
+          echo "$out"
+          test "$out" = "pdf ok (595, 842)"
       - name: The exe runs an agent on a local browser
         shell: pwsh
         run: |

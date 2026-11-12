@@ -136,7 +136,82 @@ class Api:
 			'links': [{'url': u, 'status': link_status(u, rows, current)} for u in settings.job_urls],
 			'home': str(app_home()),
 			'profile_score': self._profile_score(settings),
+			'setup': self._setup_status(settings),
+			'last_stop': self._runner.last_stop if self._runner else None,
 		}
+
+	@staticmethod
+	def _setup_status(settings: Settings) -> dict:
+		"""What Start needs, for the first-run checklist: the two files and a usable AI model."""
+
+		def usable(path: str) -> bool:
+			try:
+				return bool(path) and bool(Path(path).expanduser().read_text(encoding='utf-8-sig').strip())
+			except OSError:
+				return False
+
+		model_error = ''
+		if settings.provider == 'gemini' and not settings.gemini_api_key:
+			model_error = 'Add your Gemini API key.'
+		elif settings.provider == 'openai' and not settings.openai_api_key:
+			model_error = 'Add your OpenAI API key.'
+		elif settings.provider == 'chatgpt':
+			from jobapply import chatgpt_auth
+
+			with contextlib.suppress(Exception):
+				if not chatgpt_auth.status().get('signed_in'):
+					model_error = 'Sign in with ChatGPT.'
+		return {
+			'profile': usable(settings.profile_path),
+			'criteria': usable(settings.criteria_path),
+			'model': not model_error,
+			'model_error': model_error,
+		}
+
+	# History: one job's A-to-Z, and its documents shown in the app
+
+	def job_detail(self, url: str) -> dict:
+		"""The job's newest History row and its record (what it was about, what was filled and attached, what
+		happened). A job from before records existed has record {}."""
+		from jobapply import records
+
+		row = tracker().latest(url)
+		if row is None:
+			return {'error': 'That job is not in your History.'}
+		record = records.load(url)
+		documents = dict(record.get('documents') or {})
+		documents.setdefault('resume_pdf', row.resume)
+		documents.setdefault('cover_letter_pdf', row.cover_letter)
+		if not documents.get('folder') and row.resume:
+			documents['folder'] = str(Path(row.resume).parent)
+		folder = Path(documents['folder']) if documents.get('folder') else None
+		if folder and not documents.get('cover_letter_text') and (folder / 'cover_letter.txt').exists():
+			with contextlib.suppress(OSError):
+				documents['cover_letter_text'] = (folder / 'cover_letter.txt').read_text(encoding='utf-8').strip()
+		if folder and not record.get('summary') and (folder / 'resume.json').exists():
+			with contextlib.suppress(Exception):  # documents written before records: the summary is in the model's JSON
+				import json
+
+				saved = json.loads((folder / 'resume.json').read_text(encoding='utf-8'))
+				if saved.get('job_summary'):
+					record['summary'] = saved['job_summary']
+		record['documents'] = documents
+		for name in ('resume_pdf', 'cover_letter_pdf'):
+			documents[name + '_exists'] = bool(documents.get(name)) and Path(documents[name]).exists()
+		return {'row': dataclasses.asdict(row), 'record': record}
+
+	def document_pages(self, path: str, scale: float = 2.0) -> dict:
+		"""A PDF's pages (or a PNG/JPEG) as images for the in-app viewer: {pages: [data URL], width, height}. Only
+		files in the Jobify data folder (the documents and screenshots it made)."""
+		from jobapply import viewer
+
+		try:
+			return viewer.pages(path, scale=scale)
+		except viewer.ViewerError as e:
+			return {'error': str(e)}
+		except Exception as e:
+			logger.exception('document view failed')
+			return {'error': f'Could not show this file: {e}'}
 
 	@staticmethod
 	def _profile_score(settings: Settings) -> dict | None:
@@ -219,10 +294,22 @@ class Api:
 			return {'error': str(e)}
 
 	def open_csv(self) -> dict:
+		"""Open a copy of applications.csv: Excel locks the file it opens, and Jobify could not log the next job."""
 		path = app_home() / 'applications.csv'
 		if not path.exists():
 			return {'error': 'No applications yet.'}
-		return self.open_path(str(path))
+		copy = sub('exports') / 'applications (copy).csv'
+		try:
+			shutil.copyfile(path, copy)
+		except OSError:  # the copy is open in Excel from last time: a new name
+			from datetime import datetime
+
+			copy = sub('exports') / f'applications {datetime.now():%Y-%m-%d %H%M%S}.csv'
+			try:
+				shutil.copyfile(path, copy)
+			except OSError as e:
+				return {'error': f'Could not copy the history: {e}'}
+		return self.open_path(str(copy))
 
 	# loop
 
@@ -408,6 +495,31 @@ class Api:
 		except (ValueError, OSError) as e:
 			return {'error': str(e)}
 		return {'ok': True, 'finishing': self._refill_answered()}
+
+	def test_model(self, provider: str = '') -> dict:
+		"""One tiny request to the AI model as saved in Setup (or the backup provider): says whether it works before
+		a run depends on it."""
+		from browser_use.llm import provider_preflight
+		from jobapply.llm import agent_llm, writer_model
+
+		try:
+			settings = Settings.load()
+			model = writer_model(agent_llm(settings, provider or None))
+			if error := provider_preflight(model):
+				return {'error': f'The AI provider refused it: {error}'}
+			from pydantic_ai import Agent
+
+			async def ask() -> str:
+				result = await asyncio.wait_for(Agent(model).run('Reply with the single word OK.'), 60)
+				return str(result.output)
+
+			reply = asyncio.run(ask())
+		except TimeoutError:
+			return {'error': 'The AI model did not answer within a minute. Try again, or pick another model.'}
+		except Exception as e:
+			return {'error': f'The AI model did not work: {e}'}
+		name = getattr(model, 'model_name', '') or (provider or settings.provider)
+		return {'ok': True, 'model': name, 'reply': reply[:80]}
 
 	# ChatGPT
 
